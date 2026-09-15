@@ -5,6 +5,7 @@ export const connection = reactive({
   server: { value: 'Uninitialized', severity: 'danger' },
   device: { value: 'Offline', severity: 'danger' },
   status: 'text-gray-500',
+  ip: '',  // device LAN address, retained on <name>/d/ip; '' when unknown
 });
 
 export const config = reactive({
@@ -52,7 +53,6 @@ export const files = reactive({
   disabled: false,
   download: {
     name: "",
-    buf: [],
     progress: 0,
     size: 0,
     time: null,
@@ -91,7 +91,21 @@ export const telemetry = reactive({
   analog: [[], [], [], [], [], [], [], [], []],
   gyro: [[], [], [], [], [], [], []],
   can: [[]],
+  can_index: {},  // unit -> telemetry.can column indices, in series order
 });
+
+/* uPlot data for one unit's CAN chart. the returned array holds references to
+ * the same column arrays telemetry.can already owns, so this copies nothing
+ * but the outer array. */
+export function can_slice(unit) {
+  const idx = telemetry.can_index[unit];
+
+  if (!idx) {
+    return [telemetry.can[0]];
+  }
+
+  return [telemetry.can[0], ...idx.map(i => telemetry.can[i] || [])];
+}
 
 export function format_size(size) {
   if (size >= 1024 * 1024) return (size / (1024 * 1024)).toFixed(2) + " MB"

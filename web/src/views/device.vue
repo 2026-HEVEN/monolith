@@ -2,7 +2,7 @@
   defineOptions({name: 'DeviceConfiguration'});
 
   import {ref, onMounted} from 'vue';
-  import {init_mqtt, publish} from '@/service/mqtt';
+  import {init_mqtt, publish, begin_download} from '@/service/mqtt';
   import {connection, config, files, format_size} from '@/service/state';
 
   import {useConfirm} from "primevue/useconfirm";
@@ -239,6 +239,20 @@
     });
   }
 
+  /* Direct LAN download. A top-level navigation to http:// from an https://
+   * page is not mixed content, so no fetch/CORS is involved: the browser
+   * streams the file to disk itself and nothing passes through the tab's
+   * memory or the MQTT broker. Only reachable on the device's own network. */
+  function download_file_http(name) {
+    const a = document.createElement('a');
+    a.href = `http://${connection.ip}/sd/${encodeURIComponent(name)}`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   function download_file(name, size, index) {
     if (connection.device.value !== 'Online') {
       ToastEventBus.emit('add', {
@@ -250,6 +264,8 @@
       });
       return;
     }
+
+    begin_download();
 
     files.loading.download = index;
     files.download.name = name;
@@ -462,7 +478,11 @@
                   <div class="text-sm truncate">{{ item.name }}</div>
                   <div class="text-xs text-gray-500 mt-1">{{ format_size(item.size) }}</div>
                 </div>
-                <Button icon="pi pi-download" class="mx-1" text @click="download_file(item.name, item.size, index + 1)"
+                <Button v-if="connection.ip" icon="pi pi-bolt" class="mx-1" text severity="success"
+                  :title="`Direct download over LAN (http://${connection.ip})`"
+                  @click="download_file_http(item.name)" :disabled="files.disabled" />
+                <Button icon="pi pi-download" class="mx-1" text title="Download through the server"
+                  @click="download_file(item.name, item.size, index + 1)"
                   :loading="files.loading.download === index + 1" :disabled="files.disabled" />
                 <Button icon="pi pi-trash" class="mx-1" text severity="danger" @click="delete_file(item.name, index)"
                   :loading="files.loading.del === index" :disabled="files.disabled" />
