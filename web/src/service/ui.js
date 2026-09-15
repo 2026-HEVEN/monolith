@@ -46,6 +46,17 @@ export const units = reactive({
   Acceleration: { unit: 'g', display: 'Acceleration (g)', default: true },
   "Angular Velocity": { unit: '°/s', display: 'Angular Velocity (°/s)', default: true },
   Speed: { unit: 'km/h', display: 'Speed (km/h)', default: true },
+
+  /* not marked default: removable from the UI, but restored by "reset". */
+  Current: { unit: 'A', display: 'Current (A)' },
+  Torque: { unit: 'N·m', display: 'Torque (N·m)' },
+  Force: { unit: 'N', display: 'Force (N)' },
+  "Rotational Speed": { unit: 'rpm', display: 'Rotational Speed (rpm)' },
+  Ratio: { unit: '%', display: 'Ratio (%)' },
+  Power: { unit: 'kW', display: 'Power (kW)' },
+  Energy: { unit: 'Wh', display: 'Energy (Wh)' },
+  Pressure: { unit: 'bar', display: 'Pressure (bar)' },
+  Distance: { unit: 'm', display: 'Distance (m)' },
 });
 
 export const defaults = {
@@ -69,6 +80,27 @@ function load_decoder() {
       ...v,
     });
   });
+}
+
+/* CAN channels grouped by unit. one chart per group keeps each plot down to a
+ * handful of series that share a scale, instead of every decoded channel of
+ * every frame piled onto one axis. */
+export function can_unit_groups() {
+  const groups = {};
+
+  Object.values(can_decoder).forEach(decoders => {
+    decoders.forEach(decoder => {
+      const unit = decoder.unit || 'Volt';
+
+      if (!groups[unit]) {
+        groups[unit] = [];
+      }
+
+      groups[unit].push(decoder);
+    });
+  });
+
+  return groups;
 }
 
 watch(views, save_view, { deep: true })
