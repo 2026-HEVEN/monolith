@@ -5,8 +5,8 @@
   import {dark} from '@/layout/composables/layout';
   import {publish} from '@/service/mqtt';
   import {term} from '@/service/terminal';
-  import {state, times, cons, telemetry, fmt, digit} from '@/service/state';
-  import {views, units, can_decoder, colors} from '@/service/ui';
+  import {state, times, cons, telemetry, fmt, digit, can_slice} from '@/service/state';
+  import {views, units, can_decoder, can_unit_groups, colors} from '@/service/ui';
   import {map, line, path, speed, course} from '@/service/telemetry';
   import {init_map} from '@/service/map';
 
@@ -26,7 +26,17 @@
     analog: ref(null),
     gyro: ref(null),
     gps: ref(null),
-    can: ref(null),
+  };
+
+  /* the CAN plot is split one-chart-per-unit: computed here, at setup time,
+   * so the containers exist in the DOM by the time init_chart() runs. */
+  const can_groups = can_unit_groups();
+  const can_containers = {};
+
+  /* every telemetry chart shares one cursor, so splitting by unit does not
+   * cost the ability to line channels up against each other across charts. */
+  const cursor_sync = {
+    sync: { key: uPlot.sync('telemetry').key, setSeries: false },
   };
 
   onMounted(() => {
@@ -56,10 +66,10 @@
   };
 
   function init_chart() {
-    if (telemetry.chart.analog || telemetry.chart.gyro) {
-      telemetry.chart.analog?.destroy();
-      telemetry.chart.gyro?.destroy();
-    }
+    Object.keys(telemetry.chart).forEach(key => {
+      telemetry.chart[key]?.destroy();
+      delete telemetry.chart[key];
+    });
 
     const scales = {};
     const axes = [{
@@ -119,6 +129,7 @@
     telemetry.chart.analog = new uPlot({
       width: 600, height: 400,
       pxAlign: 0, pxSnap: false,
+      cursor: cursor_sync,
       scales: scales,
       series: [
         {value: fmt.time},
@@ -137,6 +148,7 @@
     telemetry.chart.gyro = new uPlot({
       width: 600, height: 400,
       pxAlign: 0, pxSnap: false,
+      cursor: cursor_sync,
       scales: scales,
       series: [
         {value: fmt.time},
@@ -150,29 +162,44 @@
       axes: axes,
     }, telemetry.gyro, container.gyro.value);
 
-    const series = [{value: fmt.time}];
+    /* one chart per unit. every series on a chart shares a scale, so channels
+     * of the same unit are directly comparable, and no chart carries more
+     * than its own unit's handful of channels. */
+    telemetry.can_index = {};
 
-    for (const [k, o] of Object.entries(can_decoder)) {
-      for (const x of o) {
+    for (const [unit, decoders] of Object.entries(can_groups)) {
+      const el = can_containers[unit];
+
+      if (!el) {
+        continue;
+      }
+
+      const series = [{value: fmt.time}];
+
+      decoders.forEach((decoder, i) => {
         series.push({
-          label: x.name,
-          stroke: colors[series.length - 1],
-          value: fmt[x.unit],
+          label: decoder.name,
+          stroke: colors[i],
+          value: fmt[unit],
           points: {show: false},
           pxAlign: 0,
-          scale: x.unit,
+          scale: unit,
           spanGaps: true,
         });
-      }
-    }
+      });
 
-    telemetry.chart.can = new uPlot({
-      width: 600, height: 400,
-      pxAlign: 0, pxSnap: false,
-      scales: scales,
-      series: series,
-      axes: axes,
-    }, telemetry.can, container.can.value);
+      // column indices into telemetry.can, in this chart's series order
+      telemetry.can_index[unit] = decoders.map(decoder => decoder.idx);
+
+      telemetry.chart[`can:${unit}`] = new uPlot({
+        width: 600, height: 400,
+        pxAlign: 0, pxSnap: false,
+        cursor: cursor_sync,
+        scales: scales,
+        series: series,
+        axes: axes,
+      }, can_slice(unit), el);
+    }
 
     setInterval(() => {
       Object.entries(telemetry.chart).forEach(e => {
@@ -316,7 +343,10 @@
 
       <div v-if="views.can.display.telemetry && Object.keys(can_decoder).length" class="card">
         <div class="font-semibold text-xl mb-6">CAN</div>
-        <div class="chart" :ref="container.can"></div>
+        <div v-for="(decoders, unit) in can_groups" :key="unit" class="mb-6">
+          <div class="text-sm text-gray-500 mb-2">{{ units[unit] ? units[unit].display : unit }}</div>
+          <div class="chart" :ref="el => can_containers[unit] = el"></div>
+        </div>
       </div>
 
       <div v-if="views.gps.display.telemetry" class="card" style="position: relative;">

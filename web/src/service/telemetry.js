@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { convert, signed } from '@/service/protocol';
-import { times, state, telemetry } from '@/service/state';
+import { times, state, telemetry, can_slice } from '@/service/state';
 import { can_decoder, views } from '@/service/ui';
 
 export const map = ref(null);
@@ -149,11 +149,15 @@ export function update_can(log) {
     }
   }
 
-  if (telemetry.chart.can) {
-    telemetry.chart.can.setData(telemetry.can);
-    telemetry.chart.can.setScale('x', {
-      min: new Date().getTime() / 1000 - 60,
-      max: new Date().getTime() / 1000
-    });
-  }
+  Object.keys(telemetry.can_index).forEach(unit => {
+    const chart = telemetry.chart[`can:${unit}`];
+
+    if (chart) {
+      chart.setData(can_slice(unit));
+      chart.setScale('x', {
+        min: new Date().getTime() / 1000 - 60,
+        max: new Date().getTime() / 1000
+      });
+    }
+  });
 }
