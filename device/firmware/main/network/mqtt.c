@@ -5,6 +5,7 @@
 #include "main.h"
 
 #include "driver/twai.h"
+#include "esp_netif.h"
 
 log_buf_t logbuf;
 esp_mqtt_client_handle_t mqtt = NULL;
@@ -309,6 +310,21 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
       snprintf(topic, sizeof(topic), "%s/d/boot", storage.device.name);
       esp_mqtt_client_publish(mqtt, topic, (char *)&boot.tv_sec, sizeof(boot.tv_sec), MQTT_QOS_1, true);
+
+      /* retained LAN address, so the web app can offer a direct HTTP download
+       * of SD logs instead of pulling them chunk by chunk over MQTT. */
+      {
+        char addr[16]         = { 0 };
+        esp_netif_t *netif    = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_ip_info_t ip;
+
+        if (netif != NULL && esp_netif_get_ip_info(netif, &ip) == ESP_OK) {
+          snprintf(addr, sizeof(addr), IPSTR, IP2STR(&ip.ip));
+        }
+
+        snprintf(topic, sizeof(topic), "%s/d/ip", storage.device.name);
+        esp_mqtt_client_publish(mqtt, topic, addr, strlen(addr), MQTT_QOS_1, true);
+      }
 
       CLEAR_ALL(&logbuf.run, MQTT);
       SYSLOG("MQTT_CONN");

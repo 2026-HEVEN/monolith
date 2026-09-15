@@ -10,7 +10,8 @@
 #define WIFI_FAIL_BIT (1 << 0)
 #define WIFI_CONNECTED_BIT (1 << 1)
 
-httpd_handle_t webserver(void);
+void webserver(void);
+void webserver_sta(void);
 
 static EventGroupHandle_t wifi_evt;
 
@@ -137,6 +138,10 @@ void network_init(void) {
     ERROR_SYSLOG(&init, WIFI, "connection failed", "STA_CONN_FAIL");
     return;
   }
+
+  /* the HTTP server used to be AP-mode only. it is started in STA mode too so
+   * SD logs can be pulled directly over the LAN instead of through MQTT. */
+  webserver_sta();
 
   // SNTP time sync service
   esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.google.com");
