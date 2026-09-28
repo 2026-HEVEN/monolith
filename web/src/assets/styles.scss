@@ -39,7 +39,10 @@
 
 .u-legend {
   display: grid!important;
-  @apply grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6;
+  /* columns sized to fit a typical channel name instead of a fixed count, so
+   * long CAN labels do not run into the neighbouring entry */
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  column-gap: 1rem;
 }
 
 .u-legend table,
@@ -54,6 +57,19 @@
   align-items: center;
   white-space: nowrap;
   box-sizing: border-box;
+  min-width: 0;
+}
+
+/* a label that still does not fit is cut with an ellipsis; the value keeps
+ * its full width */
+.u-legend tr.u-series th {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.u-legend tr.u-series td {
+  flex-shrink: 0;
 }
 
 .u-legend .u-series:first-child .u-marker {

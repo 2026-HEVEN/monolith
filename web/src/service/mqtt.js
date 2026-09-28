@@ -19,6 +19,15 @@ let mqtt_client = null;
 let first_auth_fail = true;
 let pending_ver = null;
 
+/* A page that wants the downloaded bytes itself (the data viewer) registers a
+ * sink before sending cmd/get; the file then goes to the sink instead of
+ * being saved to disk. The sink is used for one download only. */
+let download_sink = null;
+
+export function set_download_sink(fn) {
+    download_sink = fn;
+}
+
 export function init_mqtt() {
     if (mqtt_client) {
         mqtt_client.end();
@@ -276,8 +285,12 @@ export function init_mqtt() {
 
                     files.loading.download = false;
                     files.disabled = false;
+                    download_sink = null;
                     return;
                 }
+
+                const sink = download_sink;
+                download_sink = null;
 
                 const device = localStorage.getItem('server/name');
                 const fileUrl = `/api/files/${device}/${files.download.nonce}/${files.download.name}`;
@@ -320,13 +333,17 @@ export function init_mqtt() {
                 }).then(blob => {
                     const totalElapsed = (new Date().getTime() - files.download.time) / 1000;
 
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob);
-                    a.download = files.download.name;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(a.href);
+                    if (sink) {
+                        sink(blob, files.download.name);
+                    } else {
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = files.download.name;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(a.href);
+                    }
 
                     fetch(fileUrl, { method: 'DELETE' }).catch(e => console.warn('File cleanup failed:', e));
 

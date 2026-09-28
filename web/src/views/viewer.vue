@@ -4,7 +4,8 @@ defineOptions({ name: 'Viewer' });
 import { ref, shallowRef, onMounted } from 'vue';
 import { dark } from '@/layout/composables/layout';
 import { parse, convert, signed, can_filter_match } from '@/service/protocol';
-import { fmt, digit, format_size } from '@/service/state';
+import { fmt, digit, format_size, connection, files } from '@/service/state';
+import { publish, set_download_sink } from '@/service/mqtt';
 import { views, units, can_decoder, colors } from '@/service/ui';
 import { init_map, rebuild_hotline, HOTLINE_MODE } from '@/service/map';
 import { plugin_wheel_zoom, plugin_touch_zoom } from '@/service/uplot';
@@ -65,11 +66,60 @@ onMounted(() => {
     init_map(map, line, path, gps, hotlineMode.value);
 });
 
+/* ---- open a log straight from the logger ----
+ * Same path as the device page's download: the logger uploads the file to
+ * the broker server, and the page fetches it from /api/files/. Here the
+ * bytes go to the viewer instead of to disk. */
+const logger_dialog = ref(false);
+const logger_opening = ref('');
+
+function logger_list() {
+    if (connection.device.value !== 'Online') return;
+
+    files.loading.list = true;
+    files.disabled = true;
+    files.buf.length = 0;
+    files.list.length = 0;
+    publish('cmd/ls', '!', 1);
+}
+
+function logger_show() {
+    logger_dialog.value = true;
+    if (!files.list.length && !files.loading.list) logger_list();
+}
+
+function logger_open(item) {
+    if (connection.device.value !== 'Online' || files.disabled) return;
+
+    logger_opening.value = item.name;
+    set_download_sink((blob, name) => {
+        logger_dialog.value = false;
+        logger_opening.value = '';
+        open_file(blob, name);
+    });
+
+    files.loading.download = item.name;
+    files.download.name = item.name;
+    files.download.nonce = crypto.randomUUID();
+    files.download.size = item.size;
+    files.download.progress = 0;
+    files.download.transferred = 0;
+    files.download.time = new Date().getTime();
+    files.download.speed = '';
+    files.download.phase = 'upload';
+    files.disabled = true;
+    publish(`cmd/get/${item.name}`, files.download.nonce, 1);
+}
+
 function upload(f) {
-    file.name.value = f.files[0].name;
+    open_file(f.files[0], f.files[0].name);
+}
+
+function open_file(blob, name) {
+    file.name.value = name;
 
     const reader = new FileReader();
-    reader.readAsArrayBuffer(f.files[0]);
+    reader.readAsArrayBuffer(blob);
     reader.onloadstart = () => {
         file.device.value = 'Parsing recorded logs...';
         file.statistic.value = "Analyzing driver's faults...";
@@ -113,7 +163,7 @@ function upload(f) {
         }
         file.device.value = result.header.boot.mac;
         file.boot.value = dayjs(bt * 1000).format('YYYY-MM-DD HH:mm:ss (UTC Z)');
-        file.statistic.value = `${result.ok.toLocaleString()} valid / ${result.error.length.toLocaleString()} error (${format_size(f.files[0].size)})`;
+        file.statistic.value = `${result.ok.toLocaleString()} valid / ${result.error.length.toLocaleString()} error (${format_size(blob.size)})`;
 
         const d = dayjs.duration(result.latest.timestamp);
         const hours = Math.floor(d.asHours());
@@ -589,6 +639,7 @@ function timelapse() {
                 <div class="font-semibold text-xl">File</div>
                 <div class="flex justify-start mt-4 w-full" style="align-items: center">
                     <FileUpload mode="basic" accept=".log" @uploader="upload" :auto="true" customUpload chooseIcon="pi pi-file" chooseLabel="Select" />
+                    <Button label="로거에서 불러오기" icon="pi pi-cloud-download" severity="secondary" class="ml-2" :disabled="connection.device.value !== 'Online'" :title="connection.device.value === 'Online' ? '' : '로거가 오프라인입니다'" @click="logger_show" />
                     <span class="ml-4"> {{ file.name.value ? file.name : 'Select a file to view' }}</span>
                 </div>
                 <div v-if="file.name" class="mt-6 space-y-5">
@@ -615,6 +666,32 @@ function timelapse() {
                     </div>
                 </div>
             </div>
+
+            <Dialog v-model:visible="logger_dialog" modal header="로거에서 불러오기" :style="{ width: '34rem', maxWidth: '95vw' }">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm opacity-70">현재 기록 중인 파일은 목록에 나오지 않습니다.</span>
+                    <Button icon="pi pi-refresh" text size="small" :loading="files.loading.list" :disabled="files.disabled" @click="logger_list" title="목록 새로고침" />
+                </div>
+                <div v-if="logger_opening" class="mb-4">
+                    <div class="text-sm mb-1">
+                        {{ logger_opening }} — {{ files.download.phase === 'upload' ? '로거 → 서버 업로드' : '서버 → 브라우저 다운로드' }}
+                        <span class="opacity-60">{{ files.download.progress }}% {{ files.download.speed }}</span>
+                    </div>
+                    <ProgressBar :value="Number(files.download.progress) || 0" :showValue="false" style="height: 6px" />
+                </div>
+                <DataTable :value="files.list" size="small" scrollable scrollHeight="360px" :loading="files.loading.list">
+                    <template #empty><div class="p-3 text-center opacity-60">파일이 없습니다.</div></template>
+                    <Column field="name" header="파일" />
+                    <Column header="크기" style="width: 7rem">
+                        <template #body="{ data }">{{ format_size(data.size) }}</template>
+                    </Column>
+                    <Column style="width: 5rem">
+                        <template #body="{ data }">
+                            <Button label="열기" size="small" :loading="logger_opening === data.name" :disabled="files.disabled" @click="logger_open(data)" />
+                        </template>
+                    </Column>
+                </DataTable>
+            </Dialog>
 
             <HevenAnalysis v-if="analysis" :analysis="analysis" :boot="boot_time" :name="file.name.value" class="mb-8" />
 

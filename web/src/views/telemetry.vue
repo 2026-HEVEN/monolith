@@ -1,7 +1,7 @@
 <script setup>
 defineOptions({ name: 'Telemetry' });
 
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import { dark } from '@/layout/composables/layout';
 import { publish } from '@/service/mqtt';
 import { term } from '@/service/terminal';
@@ -38,6 +38,49 @@ const can_containers = {};
 const cursor_sync = {
     sync: { key: uPlot.sync('telemetry').key, setSeries: false }
 };
+
+/* CAN charts sit in a grid so related units can be read side by side instead
+ * of scrolling between stacked charts. The column count is a per-browser
+ * preference. */
+const CAN_COL_OPTIONS = [1, 2, 3].map((n) => ({ label: `${n}열`, value: n }));
+
+function load_can_cols() {
+    try {
+        const n = Number(localStorage.getItem('telemetry/can_cols'));
+        return [1, 2, 3].includes(n) ? n : 2;
+    } catch {
+        return 2;
+    }
+}
+
+const can_cols = ref(load_can_cols());
+const can_grid = ref(null);
+
+watch(can_cols, (n) => {
+    try {
+        localStorage.setItem('telemetry/can_cols', String(n));
+    } catch {
+        /* storage unavailable: keep the choice for this page only */
+    }
+    nextTick(resize_charts);
+});
+
+/* each chart takes the width of its own container: full card width for
+ * analog/gyro, one grid cell for CAN. */
+function chart_host(key) {
+    const [group, unit] = key.split(':');
+    return unit ? can_containers[unit] : container[group]?.value;
+}
+
+function resize_charts() {
+    Object.entries(telemetry.chart).forEach(([key, chart]) => {
+        const width = chart_host(key)?.clientWidth;
+
+        if (width && width !== chart.width) {
+            chart.setSize({ width, height: width * 0.6 });
+        }
+    });
+}
 
 onMounted(() => {
     const fit = new FitAddon();
@@ -199,16 +242,22 @@ function init_chart() {
         // column indices into telemetry.can, in this chart's series order
         telemetry.can_index[unit] = decoders.map((decoder) => decoder.idx);
 
+        const cellWidth = el.clientWidth || initWidth;
+
         telemetry.chart[`can:${unit}`] = new uPlot(
             {
-                width: initWidth,
-                height: initWidth * 0.6,
+                width: cellWidth,
+                height: cellWidth * 0.6,
                 pxAlign: 0,
                 pxSnap: false,
                 cursor: cursor_sync,
                 scales: scales,
                 series: series,
-                axes: axes
+                axes: axes,
+                hooks: {
+                    // full channel name on hover for labels cut by the legend width
+                    init: [(u) => u.root.querySelectorAll('.u-legend .u-label').forEach((l) => (l.title = l.textContent))]
+                }
             },
             can_slice(unit),
             el
@@ -240,16 +289,11 @@ function init_chart() {
 
     requestAnimationFrame(tick);
 
-    new ResizeObserver((entries) => {
-        for (let entry of entries) {
-            Object.entries(telemetry.chart).forEach((e) => {
-                telemetry.chart[e[0]].setSize({
-                    width: entry.contentRect.width,
-                    height: entry.contentRect.width * 0.6
-                });
-            });
-        }
-    }).observe(container.state.value);
+    // the card width and the CAN grid cells do not always settle together
+    const observer = new ResizeObserver(resize_charts);
+    observer.observe(container.state.value);
+    if (can_grid.value) observer.observe(can_grid.value);
+    nextTick(resize_charts);
 }
 
 function split_range(d_min, d_max) {
@@ -375,10 +419,15 @@ function hex_only(event) {
             </div>
 
             <div v-if="views.can.display.telemetry && Object.keys(can_decoder).length" class="card">
-                <div class="font-semibold text-xl mb-6">CAN</div>
-                <div v-for="(decoders, unit) in can_groups" :key="unit" class="mb-6">
-                    <div class="text-sm text-gray-500 mb-2">{{ units[unit] ? units[unit].display : unit }}</div>
-                    <div class="chart" :ref="(el) => (can_containers[unit] = el)"></div>
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+                    <div class="font-semibold text-xl">CAN</div>
+                    <SelectButton v-model="can_cols" :options="CAN_COL_OPTIONS" optionLabel="label" optionValue="value" :allowEmpty="false" size="small" />
+                </div>
+                <div ref="can_grid" class="grid gap-x-6 gap-y-8" :style="{ gridTemplateColumns: `repeat(${can_cols}, minmax(0, 1fr))` }">
+                    <div v-for="(decoders, unit) in can_groups" :key="unit" class="min-w-0">
+                        <div class="text-sm text-gray-500 mb-2">{{ units[unit] ? units[unit].display : unit }}</div>
+                        <div class="chart overflow-hidden" :ref="(el) => (can_containers[unit] = el)"></div>
+                    </div>
                 </div>
             </div>
 
