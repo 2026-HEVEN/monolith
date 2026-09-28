@@ -21,15 +21,22 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
   }
 
   else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-    char buf[sizeof(system_event_t)];
-    snprintf(buf, sizeof(buf), "STA_LOST:%02X", ((wifi_event_sta_disconnected_t *)event_data)->reason);
-    ERROR_SYSLOG(&logbuf.run, WIFI, buf, buf);
+    if (IS_OK(&logbuf.run, WIFI)) {
+      char buf[sizeof(system_event_t)];
+      snprintf(buf, sizeof(buf), "STA_LOST:%02X", ((wifi_event_sta_disconnected_t *)event_data)->reason);
+      ERROR_SYSLOG(&logbuf.run, WIFI, buf, buf);
+    }
     esp_wifi_connect();
   }
 
   else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     xEventGroupSetBits(wifi_evt, WIFI_CONNECTED_BIT);
     CLEAR_ALL(&logbuf.run, WIFI);
+
+    if (mqtt != NULL && IS_ERROR(&logbuf.run, MQTT)) {
+      esp_mqtt_client_reconnect(mqtt);
+    }
+
     SYSLOG("WIFI_CONN");
     INFO(WIFI, "connected to %s(" IPSTR ")", storage.wifi.ssid, IP2STR(&((ip_event_got_ip_t *)event_data)->ip_info.ip));
   }
@@ -73,7 +80,8 @@ static void sntp_sync_callback(struct timeval *tv) {
   int cnt = 0;
 
   do {
-    ret = i2c_master_transmit(rtc, tx, sizeof(tx), portTICK_PERIOD_MS);
+    ret = i2c_master_transmit(rtc, tx, sizeof(tx), I2C_TIMEOUT_MS);
+    if (ret != ESP_OK) i2c_master_bus_reset(i2c0);
     cnt++;
   } while (ret != ESP_OK && cnt < 3);
 
@@ -87,16 +95,16 @@ static void sntp_sync_callback(struct timeval *tv) {
   INFO(RTC, "SNTP time set to %s", ctime(&tv->tv_sec));
 }
 
-void network_init(void) {
+bool network_init(void) {
   if (esp_netif_init() != ESP_OK || esp_event_loop_create_default() != ESP_OK) {
     ERROR_SYSLOG(&init, WIFI, "netif init failure", "NETIF_INIT_FAIL");
-    return;
+    return false;
   }
 
   // no SSID or proper password set, init AP mode
   if (strlen(storage.wifi.ssid) == 0 || strlen(storage.wifi.passwd) < 8) {
     webserver();
-    return;
+    return false;
   }
 
   esp_netif_create_default_wifi_sta();
@@ -105,18 +113,18 @@ void network_init(void) {
 
   if (esp_wifi_init(&wifi_cfg) != ESP_OK) {
     ERROR_SYSLOG(&init, WIFI, "init failure", "WIFI_INIT_FAIL");
-    return;
+    return false;
   }
 
   wifi_config_t wifi = { 0 };
   snprintf((char *)wifi.sta.ssid, sizeof(wifi.sta.ssid), "%s", storage.wifi.ssid);
   snprintf((char *)wifi.sta.password, sizeof(wifi.sta.password), "%s", storage.wifi.passwd);
-  wifi.sta.scan_method        = WIFI_ALL_CHANNEL_SCAN;
+  wifi.sta.scan_method        = WIFI_FAST_SCAN;
   wifi.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
   if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK || esp_wifi_set_config(WIFI_IF_STA, &wifi) != ESP_OK) {
     ERROR_SYSLOG(&init, WIFI, "STA config failure", "STA_CFG_FAIL");
-    return;
+    return false;
   }
 
   // start Wi-Fi connection
@@ -129,14 +137,14 @@ void network_init(void) {
 
   if (esp_wifi_start() != ESP_OK) {
     ERROR_SYSLOG(&init, WIFI, "STA start failure", "STA_START_FAIL");
-    return;
+    return false;
   }
 
   EventBits_t bits = xEventGroupWaitBits(wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, false, false, portMAX_DELAY);
 
   if (!(bits & WIFI_CONNECTED_BIT)) {
     ERROR_SYSLOG(&init, WIFI, "connection failed", "STA_CONN_FAIL");
-    return;
+    return false;
   }
 
   /* the HTTP server used to be AP-mode only. it is started in STA mode too so
@@ -154,4 +162,6 @@ void network_init(void) {
   } else {
     COPY_STATE(&logbuf.run, &init, WIFI);
   }
+
+  return true;
 }

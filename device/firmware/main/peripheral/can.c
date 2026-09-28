@@ -137,7 +137,7 @@ void task_can(void *pvParameters) {
     // transmit CAN messages
     twai_message_t msg;
 
-    while (true) {
+    while (cantxqueue) {
       if (xQueueReceive(cantxqueue, &msg, pdMS_TO_TICKS(0)) != pdTRUE) {
         break;
       }
@@ -169,12 +169,12 @@ void task_can(void *pvParameters) {
       TickType_t now   = xTaskGetTickCount();
       TickType_t *last = hash_table_lookup(msg.identifier | (msg.extd << 31));
 
-      if (last && now - *last >= interval) {
+      if (last && now - *last >= interval && canlogqueue) {
         *last = now;
         xQueueSend(canlogqueue, &log, 0);
       }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(portTICK_PERIOD_MS));
+    vTaskDelay(1);  // 1 tick = 1ms at 1000Hz
   }
 }

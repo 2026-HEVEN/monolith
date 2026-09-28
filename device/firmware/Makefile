@@ -2,6 +2,8 @@ IDF_PATH := $(HOME)/esp/esp-idf
 
 ifneq (,$(filter mini,$(MAKECMDGOALS)))
 	IDF_FLAGS := -DCMAKE_C_FLAGS="-DCONFIG_MONOLITH_MINI"
+else
+	IDF_FLAGS := -DCMAKE_C_FLAGS=""
 endif
 
 .PHONY: build run sim clean config dump mini

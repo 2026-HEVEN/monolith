@@ -1,6 +1,8 @@
 #include <sys/time.h>
 #include <time.h>
 
+#include <stdbool.h>
+
 #include "main.h"
 
 #include "driver/gpio.h"
@@ -26,7 +28,7 @@ const char components[][8] = { "CORE", "NVS", "RTC", "SD", "WIFI", "MQTT", "CAN"
 /***** function prototypes *****/
 void sdcard_init(void);
 void mqtt_init(void);
-void network_init(void);
+bool network_init(void);
 static void core_init(void);
 static void nvs_init(void);
 static void rtc_init(void);
@@ -62,13 +64,12 @@ void app_main(void) {
   peripheral_task_init();
 
   /*** Wi-Fi ***/
-  network_init();
-
-  /*** MQTT ***/
-  mqtt_init();
+  if (network_init()) {
+    /*** MQTT ***/
+    mqtt_init();
+  }
 
   SYSLOG("INIT_DONE");
-  INFO(CORE, "initialization complete");
 }
 
 /*******************************************************************************
@@ -314,7 +315,8 @@ static void rtc_init(void) {
   int cnt = 0;
 
   do {
-    ret = i2c_master_transmit_receive(rtc, tx, sizeof(tx), rx, sizeof(rx), portTICK_PERIOD_MS);
+    ret = i2c_master_transmit_receive(rtc, tx, sizeof(tx), rx, sizeof(rx), I2C_TIMEOUT_MS);
+    if (ret != ESP_OK) i2c_master_bus_reset(i2c0);
     cnt++;
   } while (ret != ESP_OK && cnt < 3);
 
@@ -377,6 +379,8 @@ static void peripheral_task_init(void) {
     if (xTaskCreate(task_can, "can", 4096, NULL, 4, NULL) != pdPASS) {
       ERROR_SYSLOG(&init, CORE, "CAN task create failure", "CAN_TASK_FAIL");
     }
+  } else {
+    CLEAR_ALL(&logbuf.run, CAN);
   }
 
   /***** GPS *****/
@@ -384,6 +388,8 @@ static void peripheral_task_init(void) {
     if (xTaskCreate(task_gps, "gps", 4096, NULL, 5, NULL) != pdPASS) {
       ERROR_SYSLOG(&init, CORE, "GPS task create failure", "GPS_TASK_FAIL");
     }
+  } else {
+    CLEAR_ALL(&logbuf.run, GPS);
   }
 
   /***** ANALOG *****/
@@ -391,6 +397,8 @@ static void peripheral_task_init(void) {
     if (xTaskCreate(task_analog, "analog", 4096, NULL, 5, NULL) != pdPASS) {
       ERROR_SYSLOG(&init, CORE, "ANALOG task create failure", "ANL_TASK_FAIL");
     }
+  } else {
+    CLEAR_ALL(&logbuf.run, ANALOG);
   }
 
 #ifndef CONFIG_MONOLITH_MINI
@@ -399,7 +407,11 @@ static void peripheral_task_init(void) {
     if (xTaskCreate(task_digital, "digital", 4096, NULL, 5, NULL) != pdPASS) {
       ERROR_SYSLOG(&init, CORE, "DIGITAL task create failure", "DGT_TASK_FAIL");
     }
+  } else {
+    CLEAR_ALL(&logbuf.run, DIGITAL);
   }
+#else
+  CLEAR_ALL(&logbuf.run, DIGITAL);
 #endif
 
   /***** GYROSCOPE (always enabled) *****/

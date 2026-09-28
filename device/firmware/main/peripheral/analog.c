@@ -22,27 +22,16 @@
 
 static i2c_master_bus_handle_t i2c1;
 
-esp_err_t convert(i2c_master_dev_handle_t adc, uint8_t ch, int16_t *v) {
-  esp_err_t ret;
-  int cnt = 0;
+esp_err_t adc_start(i2c_master_dev_handle_t adc, uint8_t ch) {
+  uint8_t tx[3] = { ADS1115_CONFIG_REG_ADDR, ADS1115_CONFIG(ch), ADS1115_CONFIG_L };
+  return i2c_master_transmit(adc, tx, sizeof(tx), I2C_TIMEOUT_MS);
+}
 
+esp_err_t adc_read(i2c_master_dev_handle_t adc, int16_t *v) {
   uint8_t tx_conv = ADS1115_CONVERSION_REG_ADDR;
-  uint8_t tx[3]   = { ADS1115_CONFIG_REG_ADDR, ADS1115_CONFIG(ch), ADS1115_CONFIG_L };
   uint8_t rx[2]   = { 0 };
-
-  do {
-    if (cnt) {
-      i2c_master_bus_reset(i2c1);
-    }
-
-    ret = i2c_master_transmit(adc, tx, sizeof(tx), portTICK_PERIOD_MS);
-    esp_rom_delay_us(1200);  // wait for conversion complete
-    ret |= i2c_master_transmit_receive(adc, &tx_conv, sizeof(tx_conv), rx, sizeof(rx), portTICK_PERIOD_MS);
-    cnt++;
-  } while (ret != ESP_OK && cnt < 2);
-
+  esp_err_t ret = i2c_master_transmit_receive(adc, &tx_conv, sizeof(tx_conv), rx, sizeof(rx), I2C_TIMEOUT_MS);
   *v = ((int16_t)rx[0] << 8) | rx[1];
-
   return ret;
 }
 
@@ -104,19 +93,47 @@ void task_analog(void *pvParameters) {
   }
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  sync_slot(&xLastWakeTime, TASK_SLOT_ANALOG);
 
   float temperature;
   log_t analog;
 
   while (true) {
-    esp_err_t err = convert(adc1, MUX_AIN0, &analog.payload.analog.ain1);
-    err |= convert(adc1, MUX_AIN1, &analog.payload.analog.ain2);
-    err |= convert(adc1, MUX_AIN2, &analog.payload.analog.ain3);
-    err |= convert(adc1, MUX_AIN3, &analog.payload.analog.ain4);
-    err |= convert(adc2, MUX_AIN0, &analog.payload.analog.ain5);
-    err |= convert(adc2, MUX_AIN1, &analog.payload.analog.ain6);
-    err |= convert(adc2, MUX_AIN2, &analog.payload.analog.voltage);
+    esp_err_t err = ESP_OK;
+
+    // 3 paired cycles: adc1 + adc2 simultaneous conversion
+    uint8_t  ch[]   = { MUX_AIN0, MUX_AIN1, MUX_AIN2 };
+    int16_t *dst1[] = { &analog.payload.analog.ain1, &analog.payload.analog.ain2, &analog.payload.analog.ain3 };
+    int16_t *dst2[] = { &analog.payload.analog.ain5, &analog.payload.analog.ain6, &analog.payload.analog.voltage };
+
+    for (int i = 0; i < 3; i++) {
+      int cnt = 0;
+      esp_err_t ret;
+      do {
+        if (cnt) i2c_master_bus_reset(i2c1);
+        ret  = adc_start(adc1, ch[i]);
+        ret |= adc_start(adc2, ch[i]);
+        esp_rom_delay_us(1400);
+        ret |= adc_read(adc1, dst1[i]);
+        ret |= adc_read(adc2, dst2[i]);
+        cnt++;
+      } while (ret != ESP_OK && cnt < 2);
+      err |= ret;
+    }
+
+    // single cycle: adc1 AIN3
+    {
+      int cnt = 0;
+      esp_err_t ret;
+      do {
+        if (cnt) i2c_master_bus_reset(i2c1);
+        ret  = adc_start(adc1, MUX_AIN3);
+        esp_rom_delay_us(1400);
+        ret |= adc_read(adc1, &analog.payload.analog.ain4);
+        cnt++;
+      } while (ret != ESP_OK && cnt < 2);
+      err |= ret;
+    }
+
     err |= temperature_sensor_get_celsius(sensor, &temperature);
 
     if (err == ESP_OK) {
@@ -131,7 +148,7 @@ void task_analog(void *pvParameters) {
       ERROR_SYSLOG(&logbuf.run, ANALOG, "ADC read failure", "ADC_READ_FAIL");
     }
 
-    xTaskDelayUntil(&xLastWakeTime, TASK_INTERVAL);
+    xTaskDelayUntil(&xLastWakeTime, TASK_INTERVAL_ANALOG);
   }
 }
 #else
@@ -186,11 +203,10 @@ void task_analog(void *pvParameters) {
   }
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  sync_slot(&xLastWakeTime, TASK_SLOT_ANALOG);
 
   int raw, mv;
   float temperature;
-  log_t analog;
+  log_t analog = {0};
 
   while (true) {
     esp_err_t err = temperature_sensor_get_celsius(sensor, &temperature);
@@ -210,7 +226,7 @@ void task_analog(void *pvParameters) {
       ERROR_SYSLOG(&logbuf.run, ANALOG, "read failure", "ANL_READ_FAIL");
     }
 
-    xTaskDelayUntil(&xLastWakeTime, TASK_INTERVAL);
+    xTaskDelayUntil(&xLastWakeTime, TASK_INTERVAL_ANALOG);
   }
 }
 #endif

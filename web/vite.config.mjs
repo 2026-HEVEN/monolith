@@ -9,14 +9,15 @@ import { defineConfig } from 'vite';
 // https://vitejs.dev/config/
 export default defineConfig({
     optimizeDeps: {
-        noDiscovery: true
+        noDiscovery: true,
+        include: ['leaflet', 'leaflet-hotline', '@msgpack/msgpack']
     },
     plugins: [
         vue(),
         Components({
             resolvers: [PrimeVueResolver()]
         }),
-        basicSsl(),
+        basicSsl()
     ],
     resolve: {
         alias: {
@@ -26,6 +27,6 @@ export default defineConfig({
     server: {
         host: true,
         port: 5173,
-        https: true,
-    },
+        https: true
+    }
 });

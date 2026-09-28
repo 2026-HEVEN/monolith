@@ -13,7 +13,7 @@ DIY wireless data logging platform for Student Formula and Baja.
    * Transmit CAN messages
    * Configure device (e.g. CAN bit rate)
 
-* 📀 10 Hz data rate with various signals
+* 📀 Up to 100 Hz data rate with various signals
    * 1x CAN 2.0(A/B)
    * 1x External GPS
    * 1x Internal 6-axis Accelerometer & Gyroscope

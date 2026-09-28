@@ -22,15 +22,17 @@ Formula Student 및 Baja Student 대회에 참가하는 학생들의 차량 데�
 * 원격 CAN 메시지 전송
 * 장치 설정 변경
 
-📀 10 Hz 데이터로깅
+📀 최대 100 Hz 데이터로깅
 
 * 1x CAN 2.0(A/B)
 * 1x 외장 GPS 모듈
 * 1x 6축 가속도계 & 자이로
-* 4x 디지털 입력
-* 6x 아날로그 입력
+* 4x 디지털 입력<sup>1</sup>
+* 6x 아날로그 입력<sup>1</sup>
 * 1x 전원 전압 센서
 * 1x 칩 온도 센서
+
+<sup>1</sup> mini 버전에서는 지원하지 않습니다.
 
 💡 웹 기반 데이터 분석 도구
 
@@ -44,15 +46,24 @@ Formula Student 및 Baja Student 대회에 참가하는 학생들의 차량 데�
 
 ![](images/pcb.jpg)
 
-* 크기와 제작 비용이 모두 1/3 수준으로 줄었습니다.
-* 성능과 무선통신 안정성이 대폭 개선되었습니다.
-* 데이터 추출을 위해 SD카드를 제거할 필요 없이 원격으로 다운로드할 수 있습니다.
-* 설정을 바꾸기 위해 펌웨어를 다시 플래싱할 필요 없이 원격으로 수정할 수 있습니다.
-* 원격으로 사용자 이벤트와 CAN 메시지 전송이 가능합니다.
+* PCB 크기와 제작 비용이 모두 3분의 1로 줄었습니다.
+* 데이터 처리 성능과 무선통신 안정성이 대폭 개선되었습니다.
+* 원격으로 로그를 다운로드할 수 있습니다. 데이터를 확인하기 위해 SD카드를 뽑을 필요가 없습니다.
+* 원격으로 사용자 이벤트를 로그에 삽입하거나 CAN 메시지를 전송할 수 있습니다.
+* 펌웨어 플래싱 없이도 원격으로 데이터로거 설정을 변경할 수 있습니다.
+* 웹 UI로 모든 기능을 제공하므로 전용 프로그램을 따로 설치할 필요가 없습니다.
+
+#### Original vs mini
+
+Mini 버전은 Original 대비 절반 가까운 크기로, 신용카드보다도 작은 크기를 자랑합니다.
+
+대신, 작은 크기를 위해 디지털 및 아날로그 입력 채널이 제거되었습니다. 그 외의 다른 기능은 모두 동일합니다.
 
 ## Do It Yourself!
 
-모노리스 TMA-1은 회로도와 PCB 레이아웃이 모두 [device/hardware](https://github.com/luftaquila/monolith/tree/main/device/hardware) 에 공개되어 있습니다. PCB를 직접 제작해 사용하는 것을 권장합니다.
+모노리스 TMA-1은 회로도와 PCB 레이아웃이 모두 [device/hardware](https://github.com/luftaquila/monolith/tree/main/device/hardware) 에 공개되어 있습니다.
+
+아래 방법으로 PCB를 직접 제작할 수 있으나, 급하게 필요한 경우를 위해 [https://smartstore.naver.com/luftaquila](https://smartstore.naver.com/luftaquila) 에서도 판매하고 있습니다.
 
 ### TMA-1 PCB 제작
 
@@ -99,11 +110,9 @@ PCBA Qty를 5에서 2로 조정하면 완성된 기판이 2장만 오는 대신 
 1. 모노리스의 각 핀을 다음과 같이 연결합니다.
     * `3V3`, `GND`, `DTR`, `RTS`: 컨버터에 있는 같은 이름의 핀과 연결
     * `RX`, `TX`: 컨버터의 핀과 서로 교차하여 연결 (`RX` ↔ `TX`)
-1. [esptool](https://github.com/espressif/esptool/releases/latest)을 다운받고 압축을 해제합니다.
 1. [Release](https://github.com/luftaquila/monolith/releases/latest)에서 `monolith-{version}.zip`을 다운받고 압축을 해제합니다.
-1. `esptool` 바이너리를 압축을 해제한 *firmware/* 디렉터리로 복사합니다.
-1. 터미널을 열어 *firmware/* 경로로 이동한 뒤 다음 명령을 실행합니다.\
-   `./esptool --chip esp32s3 -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"`
+1. `flash.sh` (Linux/macOS) 또는 `flash.bat` (Windows) 파일을 실행합니다.
+    * `python` 이 설치되어 있어야 합니다.
 
 ### 서버 준비
 
@@ -149,6 +158,15 @@ vi .env # set `ACME_EMAIL` and `DOMAIN_NAME` to your own
 
 sudo docker compose up -d
 ```
+
+##### 서버 공지사항
+
+`.env` 파일의 `ANNOUNCEMENT` 환경변수를 설정하면 Control Hub 접속 시 공지사항 팝업을 표시할 수 있습니다.
+
+```sh
+ANNOUNCEMENT=서버 점검 예정: 2025-01-15 02:00 ~ 04:00 (KST)
+```
+
 </details>
 
 ## 사용법
@@ -185,7 +203,7 @@ TMA-1의 무선 통신 기능(실시간 텔레메트리 및 데이터 다운로�
 
 1. 장치에 전원을 공급합니다.
 1. 첫 부팅 시 `Monolith v2 XXXXXX` 라는 자체 Wi-Fi AP가 생성됩니다. 비밀번호는 `monolith`입니다.
-1. 해당 AP에 연결하고 브라우저에서 [http://192.168.4.1](http://192.168.4.1)에 접속합니다.\
+1. 해당 AP에 연결하면 자동으로 설정 페이지가 열립니다. 열리지 않으면 브라우저에서 [http://192.168.4.1](http://192.168.4.1)에 직접 접속합니다.\
    ![](images/ap.png)
 1. TMA-1이 주행 중 연결할 휴대폰(드라이버가 들고 탈 휴대폰)의 핫스팟 정보를 `Wi-Fi SSID`와 `Wi-Fi Password`에 입력합니다.
 1. `Server Address`에 사용할 서버 주소를 입력합니다.
@@ -265,6 +283,8 @@ Control Hub는 [https://v2.monolith.luftaquila.io](https://v2.monolith.luftaquil
 
 서버를 잘 설정했고 TMA-1이 네트워크에 연결되어 있다면 모든 기능은 알아서 잘 작동합니다.
 
+GPS 카드에서 `Fix` / `No Fix` 태그로 위성 수신 상태를 확인할 수 있습니다. 궤적 표시 모드를 `Speed` (초록=저속, 빨강=고속) 또는 `Time` (남색=과거, 초록=최근)으로 전환할 수 있습니다.
+
 ##### Console
 
 사용자 이벤트나 CAN 메시지를 장치로 전송할 수 있습니다.
@@ -287,7 +307,8 @@ Control Hub는 [https://v2.monolith.luftaquila.io](https://v2.monolith.luftaquil
 
 * `Select`를 눌러 다운받은 `*.log` 파일을 엽니다.
 * `Graph` 카드에서 입력 카테고리 버튼이나 범례의 신호 이름을 눌러 그래프를 활성화합니다.
-* `GPS` 카드의 슬라이더를 조절하면 차량의 이동 궤적을 볼 수 있습니다.
+* `GPS` 카드에서 차량의 이동 궤적을 색상 그라디언트로 확인할 수 있습니다. `Speed` (초록=저속, 빨강=고속) 또는 `Time` (남색=과거, 초록=최근) 모드로 전환할 수 있으며, 슬라이더를 조절하면 특정 시점의 위치, 속도, 방위각을 볼 수 있습니다.
+* `CAN` 카드에서 기록된 CAN 메시지의 통계를 확인할 수 있습니다: 메시지 ID, 총 수신 횟수, 평균 주기(Hz / ms), DLC, 마지막 데이터 바이트를 표시합니다.
 
 기록된 CAN 데이터를 보려면 `UI Configuration` 탭에서 CAN Decoder를 먼저 설정해야 합니다.
 
@@ -333,6 +354,7 @@ CAN 메시지 디코더를 관리합니다. 디코더는 CAN 페이로드에서 
 * `Name`: 그래프에 표시할 이름
 * `CAN Message ID`: 원하는 데이터가 포함된 CAN 메시지 ID
 * `Multiplier`: 원본 값에 곱할 배율
+* `Offset`: 곱셈 후 더할 값. 최종 값은 `multiplier × 원본 + offset`이며, 기본값은 `0`입니다.
 * `Unit`: 해당 데이터의 단위. 적절한 단위가 없다면 `Units` 카드에서 추가합니다.
 * `Data Range`: CAN 페이로드에서 데이터가 포함된 범위
     * CAN 페이로드는 최대 8바이트입니다.
@@ -345,6 +367,7 @@ CAN 메시지 디코더를 관리합니다. 디코더는 CAN 페이로드에서 
 * `Data Endianness`
     * `Byte` 모드에서만 선택 가능합니다.
     * 멀티바이트 데이터의 엔디언을 정의합니다.
+* `Data Filter` / `Data Mask` (선택): CAN 페이로드 내용으로 메시지를 필터링하는 HEX 값입니다. `(data & mask) == filter` 조건을 만족하는 메시지만 디코딩됩니다. 둘 다 함께 입력하거나 모두 비워야 합니다.
 
 #### Device Configuration
 

@@ -13,7 +13,7 @@ jobs:
   build-pcb-monolith:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: |
           sudo add-apt-repository ppa:kicad/kicad-9.0-releases
           sudo apt-get update
@@ -43,7 +43,7 @@ jobs:
           cp -r device/hardware/monolith/jlcpcb/production_files kicad/gerbers
           rm kicad/*.svg
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: pcb-monolith
           path: kicad
@@ -51,7 +51,7 @@ jobs:
   build-pcb-monolith-mini:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: |
           sudo add-apt-repository ppa:kicad/kicad-9.0-releases
           sudo apt-get update
@@ -81,7 +81,7 @@ jobs:
           cp -r device/hardware/monolith-mini/jlcpcb/production_files kicad/gerbers
           rm kicad/*.svg
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: pcb-monolith-mini
           path: kicad

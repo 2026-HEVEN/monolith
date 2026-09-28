@@ -9,6 +9,7 @@
 #include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "lwip/udp.h"
 
 /* read size for streaming SD files out over HTTP. lives on the heap, so it
  * does not compete with the httpd task stack. */
@@ -16,6 +17,54 @@
 
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
+
+static const uint8_t dns_answer[] = {
+  0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01,
+  0x00, 0x00, 0x00, 0x3C, 0x00, 0x04,
+  192, 168, 4, 1,
+};
+
+static void dns_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
+  if (p == NULL || p->len < 12) {
+    if (p) pbuf_free(p);
+    return;
+  }
+
+  uint8_t *buf = (uint8_t *)p->payload;
+
+  // set response flags: QR=1, AA=1, RA=1
+  buf[2] = 0x81;
+  buf[3] = 0x80;
+  buf[6] = 0x00; // ANCOUNT = 1
+  buf[7] = 0x01;
+
+  // skip question section
+  int qend = 12;
+  while (qend < (int)p->len && buf[qend] != 0) qend += buf[qend] + 1;
+  qend += 5; // null + QTYPE(2) + QCLASS(2)
+
+  if (qend > (int)p->len) {
+    pbuf_free(p);
+    return;
+  }
+
+  struct pbuf *resp = pbuf_alloc(PBUF_TRANSPORT, qend + sizeof(dns_answer), PBUF_RAM);
+  if (resp) {
+    memcpy(resp->payload, buf, qend);
+    memcpy((uint8_t *)resp->payload + qend, dns_answer, sizeof(dns_answer));
+    udp_sendto(pcb, resp, addr, port);
+    pbuf_free(resp);
+  }
+
+  pbuf_free(p);
+}
+
+static esp_err_t redirect_root(httpd_req_t *req) {
+  httpd_resp_set_status(req, "302 Found");
+  httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+  httpd_resp_sendstr(req, "");
+  return ESP_OK;
+}
 
 static esp_err_t html(httpd_req_t *req) {
   httpd_resp_send(req, (const char *)index_html_start, index_html_end - index_html_start);
@@ -273,6 +322,8 @@ static httpd_handle_t start_httpd(void) {
   httpd_handle_t server   = NULL;
   httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
   config.server_port      = 80;
+  config.max_uri_handlers = 16;    // 5 routes + 9 captive portal routes in AP mode
+  config.max_req_hdr_len  = 1024;
   config.lru_purge_enable = true;
   config.stack_size       = 8192;
   config.uri_match_fn     = httpd_uri_match_wildcard;  // required by /sd/*
@@ -334,5 +385,28 @@ void webserver(void) {
     return;
   }
 
-  start_httpd();
+  struct udp_pcb *dns = udp_new();
+  if (dns) {
+    udp_bind(dns, IP_ADDR_ANY, 53);
+    udp_recv(dns, dns_recv, NULL);
+  }
+
+  httpd_handle_t server = start_httpd();
+
+  if (server == NULL) {
+    return;
+  }
+
+  // captive portal redirect routes
+  const char *portal_uris[] = {
+    "/generate_204", "/gen_204",
+    "/ncsi.txt", "/connecttest.txt",
+    "/hotspot-detect.html", "/library/test/success.html",
+    "/success.txt", "/favicon.ico", "/redirect",
+  };
+
+  for (int i = 0; i < sizeof(portal_uris) / sizeof(portal_uris[0]); i++) {
+    httpd_uri_t portal = { .uri = portal_uris[i], .method = HTTP_GET, .handler = redirect_root, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &portal);
+  }
 }

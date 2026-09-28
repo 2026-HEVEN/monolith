@@ -15,13 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-firmware, build-pcb]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
       - run: |
           mkdir -p firmware
           mv firmware-monolith firmware/monolith
           mv firmware-monolith-mini firmware/monolith-mini
-          zip -r monolith-${{ github.ref_name }}.zip pcb firmware
+          mkdir -p pcb
+          mv pcb-monolith pcb/monolith
+          mv pcb-monolith-mini pcb/monolith-mini
+          mv .github/scripts/flash.* .
+          zip -r monolith-${{ github.ref_name }}.zip pcb firmware flash.*
       - uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
@@ -30,3 +34,4 @@ jobs:
           tag: ${{ github.ref_name }}
           body: |
             ### Monolith ${{ github.ref_name }}
+            Please read documentation at https://v2.monolith.luftaquila.io/docs/

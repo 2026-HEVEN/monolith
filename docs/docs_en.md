@@ -22,15 +22,17 @@ This is an open-(source & hardware) project, licensed under the 🍺[Beerware Li
 * Transmit CAN messages
 * Configure the device (e.g., CAN bit rate)
 
-📀 10 Hz data rate across various signals
+📀 Up to 100 Hz data rate across various signals
 
 * 1x CAN 2.0(A/B)
 * 1x External GPS
 * 1x Internal 6-axis accelerometer & gyroscope
-* 4x Digital input channels
-* 6x Analog input channels
+* 4x Digital input channels<sup>1</sup>
+* 6x Analog input channels<sup>1</sup>
 * 1x Power supply voltage sensor
 * 1x Chip temperature sensor
+
+<sup>1</sup> Not supported on mini version.
 
 💡 Customizable web-based data analysis tool
 
@@ -52,6 +54,12 @@ It will also make you available to blame the driver by calling them while drivin
 * Better performance and telemetry stability.
 * Wireless data download & configuration.
 * Remote user event & CAN message transmit.
+
+#### Original vs mini
+
+The Mini version is nearly half the size of the Original, with a footprint even smaller than a credit card.
+
+To achieve this, the digital and analog input channels have been removed. However, all other functionalities remain identical.
 
 ## Do It Yourself!
 
@@ -109,11 +117,9 @@ It will save you another $20 and give you 3 empty PCBs as souvenir.
 1. Connect each pin of the Monolith PCB with the following pinout:
     * `3V3`, `GND`, `DTR`, `RTS`: corresponding pins on the converter.
     * `RX`, `TX`: cross-connect with the converter (`RX` ↔ `TX`).
-1. Download and unzip `esptool` from [here](https://github.com/espressif/esptool/releases/latest).
 1. Download and unzip `monolith-{version}.zip` from the [Release](https://github.com/luftaquila/monolith/releases/latest).
-1. Copy the `esptool` binary into the unzipped *firmware/* directory.
-1. Open a command prompt, cd to the *firmware/* directory and run:\
-    `./esptool --chip esp32s3 -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"`
+1. Run `flash.sh` (Linux/macOS) or `flash.bat` (Windows).
+    * `python` is required to execute.
 
 ### Prepare Server
 
@@ -159,6 +165,14 @@ vi .env # set `ACME_EMAIL` and `DOMAIN_NAME` to your own
 sudo docker compose up -d
 ```
 
+##### Server Announcement
+
+Set the `ANNOUNCEMENT` environment variable in the `.env` file to display a notice popup when users open the Control Hub.
+
+```sh
+ANNOUNCEMENT=Scheduled maintenance: 2025-01-15 02:00 ~ 04:00 (UTC)
+```
+
 </details>
 
 ## Usage
@@ -196,7 +210,7 @@ TMA-1 automatically sets its internal clock via SNTP, so you must connect it to 
 
 1. Power up the device.
 1. On first boot, it creates its own Wi-Fi access point (AP) named `Monolith v2 XXXXXX`. Password is `monolith`.
-1. Connect to that AP and open [http://192.168.4.1](http://192.168.4.1) in your browser.\
+1. Connect to that AP. The setup page will automatically open in your browser. If it doesn't, navigate to [http://192.168.4.1](http://192.168.4.1) manually.\
     ![](images/ap.png)
 1. Set `Wi-Fi SSID` and `Wi-Fi Password` to the phone's Wi-Fi Hotspot that TMA-1 will connect to while driving (the phone that the driver will bring onboard).
 1. Set `Server Address` to your server.
@@ -276,6 +290,8 @@ Also, to view the incoming CAN data, you need to set the CAN Decoders in the `UI
 
 Once the server is configured correctly and the TMA-1 is online, there is nothing else to do here. Everything will work like magic.
 
+The GPS card shows live position data with a `Fix` / `No Fix` tag indicating satellite lock status. You can switch the trail visualization between `Speed` mode (green=slow, red=fast) and `Time` mode (indigo=old, green=recent).
+
 ##### Console
 
 You can send a user event or a CAN message to the device.
@@ -299,7 +315,8 @@ Refer to the `Data Downloader` section in the `Device Configuration` tab to down
 
 * Click `Select` and open a `*.log` file that you've downloaded.
 * In the `Graph` card, toggle the input category button or the signal name of the legend to see the graph.
-* Adjust the slider in the `GPS` card to see the footage of your vehicle.
+* The `GPS` card displays the vehicle's trajectory with a color gradient trail. Switch between `Speed` (green=slow, red=fast) and `Time` (indigo=old, green=recent) modes. Use the slider to scrub through the data and view position, speed, and heading at any point.
+* The `CAN` card displays statistics for all recorded CAN messages: message ID, total count, average interval (Hz / ms), DLC, and last data bytes.
 
 To view the recorded CAN data, set the CAN Decoders in the `UI Configuration` tab first.
 
@@ -346,6 +363,7 @@ Manage CAN message decoders. A decoder extracts useful data from the CAN message
 * `Name`: The name shown on the graphs.
 * `CAN Message ID`: The message ID that desired data is included.
 * `Multiplier`: The number multiplied to the original value.
+* `Offset`: The number added after multiplication. Final value is `multiplier × original + offset`. Default is `0`.
 * `Unit`: The data unit that added on the `Units` card.
 * `Data Range`: The part of the CAN payload that contains the data.
     * The CAN payload has a maximum length of 8 bytes.
@@ -358,6 +376,7 @@ Manage CAN message decoders. A decoder extracts useful data from the CAN message
 * `Data Endianness`
     * Only available in `Byte` mode.
     * Defines the endianness of multi-byte data.
+* `Data Filter` / `Data Mask` (optional): Hex values to filter CAN messages by payload content. Only messages where `(data & mask) == filter` are decoded. Both must be specified together or left empty.
 
 #### Device Configuration
 

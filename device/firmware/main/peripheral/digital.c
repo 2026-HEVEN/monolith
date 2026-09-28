@@ -7,7 +7,7 @@ static void digital_isr(void *arg) {
   logbuf.digital.payload.digital.din2 = gpio_get_level(GPIO_NUM_12);
   logbuf.digital.payload.digital.din3 = gpio_get_level(GPIO_NUM_13);
   logbuf.digital.payload.digital.din4 = gpio_get_level(GPIO_NUM_14);
-  LOG(LOG_TYPE_DIGITAL, &logbuf.digital);
+  LOG_FROM_ISR(LOG_TYPE_DIGITAL, &logbuf.digital);
 }
 
 /*******************************************************************************

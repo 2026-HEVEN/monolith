@@ -43,26 +43,12 @@ bool parse_nmea_gprmc(nmea_gprmc_t *gprmc, uint8_t *data) {
   }
 }
 
+static const uint32_t GPS_BAUD_RATES[] = { 115200, 57600, 38400, 19200, 9600 };
+#define GPS_BAUD_RATES_N (sizeof(GPS_BAUD_RATES) / sizeof(GPS_BAUD_RATES[0]))
+
 void init_ublox(void) {
-  uart_bitrate_res_t res;
-  uart_bitrate_detect_config_t bitrate_config = {
-    .rx_io_num = GPIO_NUM_18,
-  };
-
-  esp_err_t ret = uart_detect_bitrate_start(UART_NUM_1, &bitrate_config);
-
-  vTaskDelay(pdMS_TO_TICKS(300));
-
-  ret |= uart_detect_bitrate_stop(UART_NUM_1, true, &res);
-
-  uint32_t bitrate = 9600;
-
-  if (ret == ESP_OK) {
-    bitrate = res.clk_freq_hz * 2 / (res.low_period + res.high_period);
-  }
-
   uart_config_t uart_config = {
-    .baud_rate = bitrate,
+    .baud_rate = 9600,
     .data_bits = UART_DATA_8_BITS,
     .parity    = UART_PARITY_DISABLE,
     .stop_bits = UART_STOP_BITS_1,
@@ -75,6 +61,30 @@ void init_ublox(void) {
       uart_enable_pattern_det_baud_intr(UART_NUM_1, '\n', 1, 10, 0, 0) != ESP_OK) {
     ERROR_SYSLOG(&init, GPS, "UART driver init failure", "GPS_UART_FAIL");
   }
+
+  // auto-detect baud rate: try each rate until valid NMEA data ('$') is received
+  uint32_t bitrate = 9600;
+
+  for (int i = 0; i < GPS_BAUD_RATES_N; i++) {
+    uart_set_baudrate(UART_NUM_1, GPS_BAUD_RATES[i]);
+    uart_flush_input(UART_NUM_1);
+    uart_pattern_queue_reset(UART_NUM_1, 16);
+
+    uint8_t peek[64];
+    int len = uart_read_bytes(UART_NUM_1, peek, sizeof(peek), pdMS_TO_TICKS(1500));
+
+    for (int j = 0; j < len; j++) {
+      if (peek[j] == '$') {
+        bitrate = GPS_BAUD_RATES[i];
+        goto baud_found;
+      }
+    }
+  }
+
+baud_found:
+  uart_set_baudrate(UART_NUM_1, bitrate);
+  uart_flush_input(UART_NUM_1);
+  uart_pattern_queue_reset(UART_NUM_1, 16);
 
   const uint8_t GPS_DISABLE_NMEA_GxGGA[] = { 0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x01, 0x00, 0x24 };
@@ -111,6 +121,31 @@ void init_ublox(void) {
 }
 
 /*******************************************************************************
+ * Integer-only fixed-point NMEA field parser
+ * Parses decimal string to integer scaled by 10^target_frac_digits.
+ ******************************************************************************/
+static uint32_t parse_nmea_fixed(const char *s, int target_frac_digits) {
+  uint32_t integer = 0, frac = 0;
+  int frac_digits = 0;
+
+  while (*s >= '0' && *s <= '9') { integer = integer * 10 + (*s++ - '0'); }
+  if (*s == '.') {
+    s++;
+    while (*s >= '0' && *s <= '9' && frac_digits < target_frac_digits + 1) {
+      frac = frac * 10 + (*s++ - '0');
+      frac_digits++;
+    }
+  }
+
+  while (frac_digits < target_frac_digits) { frac *= 10; frac_digits++; }
+  while (frac_digits > target_frac_digits) { frac = (frac + 5) / 10; frac_digits--; }
+
+  uint32_t scale = 1;
+  for (int i = 0; i < target_frac_digits; i++) scale *= 10;
+  return integer * scale + frac;
+}
+
+/*******************************************************************************
  * GPS NMEA GPRMC message monitor task
  ******************************************************************************/
 void task_gps(void *pvParameters) {
@@ -135,9 +170,19 @@ void task_gps(void *pvParameters) {
   uint8_t data[256];
   uart_event_t event;
   nmea_gprmc_t gprmc;
+  uint8_t gps_state = 0;  // 0: unknown, 1: nmea ok, 2: comm error, 3: fatal
 
   while (true) {
-    if (xQueueReceive(uart_queue, &event, portMAX_DELAY) != pdTRUE || event.type != UART_PATTERN_DET) {
+    if (xQueueReceive(uart_queue, &event, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      if (gps_state != 3) {
+        gps_state = 3;
+        CLEAR_ERROR(&logbuf.run, GPS);
+        SET_FATAL(&logbuf.run, GPS);
+      }
+      continue;
+    }
+
+    if (event.type != UART_PATTERN_DET) {
       continue;
     }
 
@@ -145,20 +190,33 @@ void task_gps(void *pvParameters) {
 
     if (pos < 0 || pos >= sizeof(data) || uart_read_bytes(UART_NUM_1, data, pos + 1, pdMS_TO_TICKS(0)) < 6) {
       uart_flush_input(UART_NUM_1);
+      uart_pattern_queue_reset(UART_NUM_1, 16);
       continue;
     }
 
-    if (strncmp((char *)data, "$GNRMC", 6) == 0 || strncmp((char *)data, "$GPRMC", 6) == 0) {
-      if (parse_nmea_gprmc(&gprmc, data)) {
-        gps.payload.gps.latitude  = (uint32_t)(atof((char *)gprmc.lat) * 100000.0f);
-        gps.payload.gps.longitude = (uint32_t)(atof((char *)gprmc.lon) * 100000.0f);
-        gps.payload.gps.lat_dir   = *gprmc.north;
-        gps.payload.gps.lon_dir   = *gprmc.east;
-        gps.payload.gps.speed     = (uint16_t)(atof((char *)gprmc.speed) * 1.852f * 100.0f);
-        gps.payload.gps.course    = (uint16_t)(atof((char *)gprmc.course) * 100.0f);
-        LOG(LOG_TYPE_GPS, &gps);
-        memcpy(&logbuf.gps, &gps, sizeof(log_t));
+    if (data[0] == '$') {
+      if (gps_state != 1) {
+        gps_state = 1;
+        CLEAR_ALL(&logbuf.run, GPS);
       }
+
+      if (strncmp((char *)data, "$GNRMC", 6) == 0 || strncmp((char *)data, "$GPRMC", 6) == 0) {
+        if (parse_nmea_gprmc(&gprmc, data)) {
+          gps.payload.gps.latitude  = parse_nmea_fixed((char *)gprmc.lat, 5);
+          gps.payload.gps.longitude = parse_nmea_fixed((char *)gprmc.lon, 5);
+          gps.payload.gps.lat_dir   = *gprmc.north;
+          gps.payload.gps.lon_dir   = *gprmc.east;
+          uint32_t speed_x100       = parse_nmea_fixed((char *)gprmc.speed, 2);
+          gps.payload.gps.speed     = (uint16_t)((speed_x100 * 1852 + 500) / 1000);
+          gps.payload.gps.course    = (uint16_t)parse_nmea_fixed((char *)gprmc.course, 2);
+          LOG(LOG_TYPE_GPS, &gps);
+          memcpy(&logbuf.gps, &gps, sizeof(log_t));
+        }
+      }
+    } else if (gps_state != 2) {
+      gps_state = 2;
+      CLEAR_FATAL(&logbuf.run, GPS);
+      SET_ERROR(&logbuf.run, GPS);
     }
 
     uart_pattern_queue_reset(UART_NUM_1, 16);

@@ -9,46 +9,80 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80/tcp
+      - "--entrypoints.web.transport.respondingTimeouts.readTimeout=30m"
+      - "--entrypoints.web.transport.respondingTimeouts.writeTimeout=30m"
       - --entrypoints.websecure.address=:443/tcp
       - --entrypoints.websecure.http.tls.certresolver=le
       - --certificatesresolvers.le.acme.tlschallenge=true
       - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
       - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
       - "--accessLog.format=json"
-      - "--accessLog.filePath=/log/traefik.log"
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./_log/traefik:/log:rw
       - ./_data/letsencrypt:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - traefik
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - .env
 
+  init-log:
+    image: busybox:latest
+    command: sh -c "touch /log/server.log && chmod 666 /log/server.log && mkdir -p /files && chown 101:101 /files"
+    volumes:
+      - ./_log:/log:rw
+      - ./_data/files:/files:rw
+    restart: "no"
+
   mosquitto:
     image: eclipse-mosquitto:2.0
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mqtt.rule=Host(`${DOMAIN_NAME}`) && Header(`Upgrade`,`websocket`)"
-      - "traefik.http.routers.mqtt.entrypoints=websecure"
-      - "traefik.http.routers.mqtt.tls=true"
-      - "traefik.http.services.mqtt.loadbalancer.server.port=9001"
+    depends_on:
+      init-log:
+        condition: service_completed_successfully
     volumes:
       - ./config:/mosquitto/config
-      - ./_log/mosquitto:/mosquitto/log:rw
+      - ./_log:/log:rw
       - ./_data/mosquitto:/mosquitto/data:rw
     networks:
       - traefik
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - .env
 
+  mqtt-proxy:
+    image: haproxy:3.1
+    depends_on:
+      - mosquitto
+    volumes:
+      - ./config/mqtt-proxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - traefik
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   nginx:
     image: nginx:latest
+    depends_on:
+      init-log:
+        condition: service_completed_successfully
+    command: /bin/sh -c 'printf "%s" "$$ANNOUNCEMENT" > /tmp/announcement && exec nginx -g "daemon off;"'
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.monolith-v2.rule=Host(`${DOMAIN_NAME}`)"
@@ -56,14 +90,36 @@ services:
       - "traefik.http.routers.monolith-v2.tls=true"
       - "traefik.http.routers.monolith-v2.tls.certresolver=le"
       - "traefik.http.services.monolith-v2.loadbalancer.server.port=7000"
+      - "traefik.http.routers.monolith-v2-upload.rule=Host(`${DOMAIN_NAME}`) && PathPrefix(`/api/files`)"
+      - "traefik.http.routers.monolith-v2-upload.entrypoints=web"
+      - "traefik.http.services.monolith-v2-upload.loadbalancer.server.port=7000"
     volumes:
       - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ../web/dist:/var/public
+      - ./_data/files:/var/files:rw
+      - ./_log:/log:rw
     networks:
       - traefik
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - .env
+
+  file-cleanup:
+    image: busybox:latest
+    command: sh -c 'while true; do sleep 300; find /var/files -type f -mmin +5 -delete; find /var/files -mindepth 1 -type d -empty -delete; done'
+    volumes:
+      - ./_data/files:/var/files:rw
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"
 
 networks:
   traefik:
