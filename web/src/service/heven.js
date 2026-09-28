@@ -45,6 +45,26 @@ export function twai_alert_names(code) {
   return TWAI_ALERTS.filter(([bit]) => code & bit).map(([, name]) => name);
 }
 
+/* EZkontrol FB2 error bitmaps (VCU docs/CAN_PROTOCOL.md §5.4), bit 0 first */
+const EZ_ERRORS = [
+  ['과전류', '과부하', '과전압', '저전압', '컨트롤러 과열', '모터 과열', '모터 스톨', '모터 결상'],
+  ['모터 센서', '모터 보조센서', '엔코더 정렬불량', '폭주방지 작동', '메인 가속', '보조 가속', '프리차지', 'DC 컨택터'],
+  ['전력밸브', '전류센서', '오토튠', 'RS485', 'CAN', '소프트웨어', '예약(bit6)', '예약(bit7)'],
+];
+
+/* bytes: [error1, error2, error3] of one controller */
+export function ez_error_names(bytes) {
+  const out = [];
+  bytes.forEach((b, i) => {
+    for (let bit = 0; bit < 8; bit++) {
+      if (b & (1 << bit)) out.push(`${EZ_ERRORS[i][bit]} (ERROR${i + 1} bit${bit})`);
+    }
+  });
+  return out;
+}
+
+const err_bytes = e => [e >> 16 & 0xFF, e >> 8 & 0xFF, e & 0xFF];
+
 export function block_names(mask) {
   return BLOCK_NAMES.filter((_, bit) => mask & (1 << bit));
 }
@@ -319,8 +339,9 @@ export function analyze(buf, opts = {}) {
           push('f_fault', t, latched);
           if (latched && !prev_fault) {
             let hex = '';
-            for (let k = 0; k < 6; k++) hex += b(k).toString(16).padStart(2, '0');
-            raw_events.push({ t, kind: 'fault', hex, origin: b(6) });
+            const bytes = [];
+            for (let k = 0; k < 6; k++) { hex += b(k).toString(16).padStart(2, '0'); bytes.push(b(k)); }
+            raw_events.push({ t, kind: 'fault', hex, origin: b(6), bytes });
           }
           prev_fault = latched;
           break;
@@ -478,7 +499,9 @@ export function build_events(an) {
     if (e.kind === 'mcu_err') {
       ev.push({
         t: e.t, cat: 'MCU', key: !!e.err,
-        msg: e.err ? `컨트롤러 ${e.side} 에러 비트 0x${e.err.toString(16).padStart(6, '0')}` : `컨트롤러 ${e.side} 에러 해제 (이전 0x${e.prev.toString(16).padStart(6, '0')})`,
+        msg: e.err
+          ? `컨트롤러 ${e.side} 에러: ${ez_error_names(err_bytes(e.err)).join(', ')} [0x${e.err.toString(16).padStart(6, '0')}]`
+          : `컨트롤러 ${e.side} 에러 해제 (이전: ${ez_error_names(err_bytes(e.prev)).join(', ')})`,
       });
     } else if (e.kind === 'block') {
       ev.push({
@@ -486,7 +509,13 @@ export function build_events(an) {
         msg: e.current ? `VCU 출력 차단: ${block_names(e.current).join(', ')}` : `VCU 출력 차단 해제 (이전 ${block_names(e.prev).join(', ')})`,
       });
     } else if (e.kind === 'fault') {
-      ev.push({ t: e.t, cat: 'MCU', key: true, msg: `VCU fault 래치 (first error ${e.hex}, origin ${e.origin})` });
+      const sides = [['L', e.bytes.slice(0, 3)], ['R', e.bytes.slice(3, 6)]]
+        .filter(([, b]) => b.some(x => x))
+        .map(([s, b]) => `${s}: ${ez_error_names(b).join(', ')}`);
+      ev.push({
+        t: e.t, cat: 'MCU', key: true,
+        msg: `VCU fault 래치 — 최초 에러 ${sides.join(' / ') || '없음'} (origin ${e.origin}, raw ${e.hex})`,
+      });
     } else if (e.cat === 'SYS') {
       ev.push(e);
     }
