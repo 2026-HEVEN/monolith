@@ -93,7 +93,14 @@
 
   const panel_list = computed(() => PANELS.filter(p => visible.value.includes(p.key)));
 
-  const marker_color = {HV: '#ef4444', VCU: '#ef4444', MCU: '#f97316', CAN: '#eab308', BMS: '#a855f7'};
+  const marker_color = {
+    HV: '#ef4444', VCU: '#ef4444', MCU: '#f97316', CAN: '#eab308', BMS: '#a855f7',
+    WSS: '#3b82f6', STATE: '#9ca3af', SYS: '#9ca3af',
+  };
+
+  /* the charts mark exactly the events the timeline currently lists, so the
+   * category chips and the 주요만 switch also filter the lines */
+  watch(events, () => charts.forEach(u => u.redraw()));
 
   function plugin_markers() {
     return {
@@ -102,12 +109,14 @@
           const {ctx, bbox} = u;
           const [xmin, xmax] = [u.scales.x.min, u.scales.x.max];
           ctx.save();
-          ctx.lineWidth = 1.5 * devicePixelRatio;
-          for (const e of an.value.events) {
-            if (!e.key || !marker_color[e.cat] || e.t < xmin || e.t > xmax) continue;
+          for (const e of events.value) {
+            if (e.t < xmin || e.t > xmax) continue;
             const x = Math.round(u.valToPos(e.t, 'x', true));
-            ctx.strokeStyle = marker_color[e.cat];
-            ctx.setLineDash(e.cat === 'HV' || e.cat === 'VCU' ? [] : [4, 4]);
+            // 주요 이벤트는 진한 실선, 나머지는 옅은 점선
+            ctx.globalAlpha = e.key ? 1 : 0.55;
+            ctx.lineWidth = (e.key ? 1.5 : 1) * devicePixelRatio;
+            ctx.strokeStyle = marker_color[e.cat] || '#9ca3af';
+            ctx.setLineDash(e.key ? [] : [4, 4]);
             ctx.beginPath();
             ctx.moveTo(x, bbox.top);
             ctx.lineTo(x, bbox.top + bbox.height);
@@ -381,8 +390,10 @@
       <SelectButton v-model="visible" :options="PANELS" optionLabel="name" optionValue="key" multiple size="small" class="mb-4 flex-wrap" />
       <div class="text-xs opacity-60 mb-4">
         <span class="pi pi-info-circle mr-1"></span>드래그로 확대, 휠로 확대·축소, 더블클릭으로 원복. 범례를 누르면 채널을 켜고 끕니다.
-        세로선: <span class="text-red-500">HV·VCU</span> / <span class="text-orange-500">MCU</span> /
-        <span class="text-yellow-500">CAN</span> / <span class="text-purple-500">BMS 문턱</span>
+        세로선은 위 이벤트 타임라인에 보이는 이벤트와 같습니다(분류·주요만 필터 적용). 주요 이벤트는 실선, 나머지는 점선:
+        <span class="text-red-500">HV·VCU</span> / <span class="text-orange-500">MCU</span> /
+        <span class="text-yellow-500">CAN</span> / <span class="text-purple-500">BMS 문턱</span> /
+        <span class="text-blue-500">WSS</span> / <span class="text-gray-400">상태·SYS</span>
       </div>
       <div v-for="p in panel_list" :key="p.key" class="mb-4">
         <div class="font-semibold mb-1">{{ p.name }} <span v-if="p.unit" class="opacity-60 text-sm">({{ p.unit }})</span></div>
