@@ -1,13 +1,15 @@
 <script setup>
   defineOptions({name: 'Viewer'});
 
-  import {ref, onMounted} from 'vue';
+  import {ref, shallowRef, onMounted} from 'vue';
   import {dark} from '@/layout/composables/layout';
   import {parse, convert} from '@/service/protocol';
   import {fmt, digit, format_size} from '@/service/state';
   import {views, units, can_decoder, colors} from '@/service/ui';
   import {init_map} from '@/service/map';
   import {plugin_wheel_zoom, plugin_touch_zoom} from '@/service/uplot';
+  import {analyze} from '@/service/heven';
+  import HevenAnalysis from '@/components/HevenAnalysis.vue';
 
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
@@ -23,6 +25,9 @@
   };
 
   let bt = 0;
+
+  const analysis = shallowRef(null);
+  const boot_time = ref(0);
 
   const gps = ref(null);
   const map = ref(null);
@@ -94,6 +99,14 @@
       }
 
       bt = result.header.boot.boot_time;
+      boot_time.value = bt;
+
+      try {
+        analysis.value = analyze(e.target.result);
+      } catch (err) {
+        analysis.value = null;
+        console.error(err);
+      }
       file.device.value = result.header.boot.mac;
       file.boot.value = dayjs(bt * 1000).format('YYYY-MM-DD HH:mm:ss (UTC Z)');
       file.statistic.value = `${result.ok.toLocaleString()} valid / ${result.error.length.toLocaleString()} error (${format_size(f.files[0].size)})`;
@@ -516,8 +529,10 @@
         </div>
       </div>
 
+      <HevenAnalysis v-if="analysis" :analysis="analysis" :boot="boot_time" :name="file.name.value" class="mb-8" />
+
       <div class="card" ref="container">
-        <div class="font-semibold text-xl mb-6">Graph</div>
+        <div class="font-semibold text-xl mb-6">사용자 정의 채널 (UI 설정)</div>
         <div v-show="chart">
           <div class="flex flex-wrap justify-start items-center mb-6 gap-3">
             <ToggleButton v-for="(tag, key) in show" :key="key" v-model="tag.ref" :onLabel="tag.name"
