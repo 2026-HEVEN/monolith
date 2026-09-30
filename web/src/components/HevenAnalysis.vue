@@ -101,7 +101,7 @@
 
   const marker_color = {
     HV: '#ef4444', VCU: '#ef4444', MCU: '#f97316', CAN: '#eab308', BMS: '#a855f7',
-    WSS: '#3b82f6', STATE: '#9ca3af', SYS: '#9ca3af',
+    WSS: '#3b82f6', STATE: '#9ca3af', SYS: '#9ca3af', RST: '#ec4899',
   };
 
   /* the charts mark exactly the events the timeline currently lists, so the

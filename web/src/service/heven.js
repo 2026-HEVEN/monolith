@@ -163,7 +163,18 @@ export const EVENT_CATS = {
   WSS: { name: 'WSS', severity: 'info' },
   STATE: { name: '상태', severity: 'secondary' },
   SYS: { name: 'SYS', severity: 'secondary' },
+  RST: { name: '리셋', severity: 'danger' },
 };
+
+/* node reset report 0x1CFDFF00 | SA, 1 s: b0 esp_reset_reason, b1 ROM reason,
+ * b2-5 uptime ms, b6 resets since power-on, b7 life. The logger writes the
+ * same cause as a SYSTEM event "RST:<name>/<rom>". */
+const RESET_ID_MASK = 0xFFFFFF00, RESET_ID_BASE = 0x1CFDFF00;
+const RESET_NODES = { 0xD0: 'VCU', 0xC0: '클러스터', 0xC1: 'EM 게이트웨이' };
+export const RESET_REASONS = [
+  'UNKNOWN', 'POWERON', 'EXT', 'SW', 'PANIC', 'INT_WDT', 'TASK_WDT', 'WDT',
+  'DEEPSLEEP', 'BROWNOUT', 'SDIO', 'USB', 'JTAG', 'EFUSE', 'PWR_GLITCH', 'CPU_LOCKUP',
+];
 
 /* ---- decoding ---------------------------------------------------------- */
 
@@ -182,6 +193,7 @@ export function analyze(buf, opts = {}) {
   const raw_events = [];
   const counts = {};                       // frames per CAN id
   const last_seen = {};                    // CAN id -> last t
+  const reset_up = {};                     // reset report SA -> last uptime s
   const gaps = {};                         // CAN id -> [{from, to}]
   const GAP_IDS = { [ID.FB1_L]: 0.25, [ID.FB1_R]: 0.25, [ID.STATUS]: 0.3, [ID.CLUSTER_CMD]: 1.0 };
   const probes = { L: [], R: [] };
@@ -213,6 +225,10 @@ export function analyze(buf, opts = {}) {
 
       if (msg.startsWith('STA_LOST')) sta_lost++;
       else if (msg.startsWith('CANALT:')) alerts.push({ t, code: parseInt(msg.slice(7), 16) });
+      else if (msg.startsWith('RST:')) {
+        const [name, rom] = msg.slice(4).split('/');
+        raw_events.push({ t, kind: 'node_reset', node: '로거', name, rom, count: null, up: null });
+      }
       else raw_events.push({ t, cat: 'SYS', msg: (type === TYPE.USER_EVENT ? 'USR ' : '') + msg });
     } else if (type === TYPE.CAN) {
       const id = dv.getUint32(i + 8, true);
@@ -230,6 +246,19 @@ export function analyze(buf, opts = {}) {
       last_seen[id] = t;
 
       const all = v => { for (let k = 0; k < 8; k++) if (b(k) !== v) return false; return true; };
+
+      /* one event per boot: first report of a node, or its uptime went back */
+      if ((id & RESET_ID_MASK) === RESET_ID_BASE) {
+        const sa = id & 0xFF, up = dv.getUint32(d + 2, true) / 1000;
+        const prev = reset_up[sa];
+        if (prev === undefined || up < prev) {
+          raw_events.push({
+            t, kind: 'node_reset', node: RESET_NODES[sa] || `SA 0x${sa.toString(16)}`,
+            name: RESET_REASONS[b(0)] || String(b(0)), rom: b(1), count: b(6), up,
+          });
+        }
+        reset_up[sa] = up;
+      }
 
       switch (id) {
         case ID.FB1_L:
@@ -531,6 +560,14 @@ export function build_events(an) {
       ev.push({
         t: e.t, cat: 'MCU', key: true,
         msg: `VCU fault 래치 — 최초 에러 ${sides.join(' / ') || '없음'} (origin ${e.origin}, raw ${e.hex})`,
+      });
+    } else if (e.kind === 'node_reset') {
+      const detail = [`ROM ${e.rom}`];
+      if (e.up !== null) detail.push(`부팅 ${e.up.toFixed(1)}초 전`);
+      if (e.count) detail.push(`전원 유지 중 리셋 ${e.count}회째`);
+      ev.push({
+        t: e.t, cat: 'RST', key: e.name !== 'POWERON',
+        msg: `${e.node} 리셋 원인 ${e.name} (${detail.join(', ')})`,
       });
     } else if (e.cat === 'SYS') {
       ev.push(e);
