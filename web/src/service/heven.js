@@ -99,6 +99,7 @@ export const CHANNELS = [
   { key: 'ibus_R', label: 'Ibus R', panel: 'current', unit: 'A' },
   { key: 'ibus_sum', label: 'Ibus 합계', panel: 'current', unit: 'A' },
   { key: 'bms_dis', label: 'BMS 방전전류', panel: 'current', unit: 'A', hold: 1.5 },
+  { key: 'em_i', label: 'EM 전류', panel: 'current', unit: 'A' },
 
   { key: 'cmd_L', label: '명령 L', panel: 'command', unit: 'A' },
   { key: 'cmd_R', label: '명령 R', panel: 'command', unit: 'A' },
@@ -110,8 +111,11 @@ export const CHANNELS = [
   { key: 'v_L', label: 'V L', panel: 'voltage', unit: 'V' },
   { key: 'v_R', label: 'V R', panel: 'voltage', unit: 'V' },
   { key: 'bms_v', label: 'BMS 팩전압', panel: 'voltage', unit: 'V', hold: 1.5 },
+  { key: 'em_v', label: 'EM HV', panel: 'voltage', unit: 'V' },
+  { key: 'em_lv', label: 'EM LV', panel: 'voltage', unit: 'V', show: false },
 
   { key: 'p_dc', label: 'DC 전력 합계', panel: 'power', unit: 'kW' },
+  { key: 'em_p', label: 'EM 전력', panel: 'power', unit: 'kW' },
 
   { key: 'rpm_L', label: 'rpm L', panel: 'rpm', unit: 'rpm' },
   { key: 'rpm_R', label: 'rpm R', panel: 'rpm', unit: 'rpm' },
@@ -136,6 +140,7 @@ export const CHANNELS = [
   { key: 'tm_L', label: '모터 L', panel: 'temp', unit: '°C', hold: 1 },
   { key: 'tm_R', label: '모터 R', panel: 'temp', unit: '°C', hold: 1 },
   { key: 'bms_t', label: 'BMS', panel: 'temp', unit: '°C', hold: 1.5 },
+  { key: 'em_t', label: '에너지미터', panel: 'temp', unit: '°C', show: false },
 
   { key: 'yaw', label: '요 레이트', panel: 'yaw', unit: '°/s' },
   { key: 'yaw_des', label: 'TV 목표 요', panel: 'yaw', unit: '°/s' },
@@ -356,6 +361,17 @@ export function analyze(buf, opts = {}) {
             push('bms_dis', t, -(u16(4) / 10 - 3200));
             push('bms_t', t, b(6) - 40);
           }
+          break;
+        }
+        /* em-gateway forwards the meter's log_record_t as is, except HV,
+         * which it corrects with the boot zero offset since 2026-09-30 */
+        case ID.EM1: {
+          const v = i16(0) / 10, cur = i16(2) / 10;
+          push('em_v', t, v);
+          push('em_i', t, cur);
+          push('em_p', t, v * cur / 1000);
+          push('em_lv', t, i16(4) / 100);
+          push('em_t', t, i16(6) / 100);
           break;
         }
       }
@@ -591,6 +607,7 @@ export function range_stats(an, a, b) {
     duration: b - a,
     over: time_above(s.ibus_sum, an.threshold, a, b),
     energy_wh: integrate(s.p_dc, a, b) * 1000 / 3600,
+    em_energy_wh: integrate(s.em_p, a, b) * 1000 / 3600,
     distance_km: integrate(s.spd_motor, a, b) / 3600,
     channels: Object.fromEntries(CHANNELS.map(c => [c.key, channel_stats(s[c.key], a, b)])),
   };
@@ -621,6 +638,9 @@ function summarize(an) {
     bms_v: st('bms_v'),
     soc: st('soc'),
     energy_wh: integrate(s.p_dc, an.t0, an.t1) * 1000 / 3600,
+    em_p: st('em_p'),
+    em_i: st('em_i'),
+    em_energy_wh: integrate(s.em_p, an.t0, an.t1) * 1000 / 3600,
     distance_km: integrate(s.spd_motor, an.t0, an.t1) / 3600,
     over: time_above(s.ibus_sum, an.threshold, an.t0, an.t1),
     hv_cuts: an.events.filter(e => e.cat === 'HV' && e.key).length,

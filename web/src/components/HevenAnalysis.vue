@@ -43,7 +43,13 @@
       {label: '주행 시간', value: `${Math.floor(s.duration / 60)}분 ${Math.round(s.duration % 60)}초`},
       {label: '최고 차속 (VCU)', value: `${n1(s.speed?.max)} km/h`, sub: at(s.speed?.t_max)},
       {label: '주행 거리 (모터 환산)', value: `${n1(s.distance_km * 1000)} m`},
-      {label: '소비 에너지 (컨트롤러)', value: `${n1(s.energy_wh)} Wh`},
+      ...(s.em_frames ? [
+        {label: '소비 에너지 (EM)', value: `${n1(s.em_energy_wh)} Wh`, sub: `컨트롤러 ${n1(s.energy_wh)} Wh`},
+        {label: '최대 전력 (EM)', value: `${n1(s.em_p?.max)} kW`, sub: at(s.em_p?.t_max), warn: s.em_p?.max > 10},
+        {label: '최대 전류 (EM)', value: `${n0(s.em_i?.max)} A`, sub: at(s.em_i?.t_max)},
+      ] : [
+        {label: '소비 에너지 (컨트롤러)', value: `${n1(s.energy_wh)} Wh`},
+      ]),
       {label: '최대 버스전류 합계', value: `${n0(s.ibus_sum?.max)} A`, sub: at(s.ibus_sum?.t_max)},
       {label: '최대 DC 전력', value: `${n1(s.p_dc?.max)} kW`, sub: at(s.p_dc?.t_max)},
       {label: '부하 중 최저 전압', value: `${n1(s.loaded_v?.min)} V`, sub: at(s.loaded_v?.t_min)},
@@ -405,7 +411,8 @@
         <div class="flex flex-wrap gap-2 mb-3">
           <Tag severity="secondary" :value="`${stats.a.toFixed(2)} ~ ${stats.b.toFixed(2)}s (${stats.duration.toFixed(2)}초)`" />
           <Tag :severity="stats.over > 0.5 ? 'danger' : 'secondary'" :value="`합계 ${an.threshold}A 초과 ${stats.over.toFixed(2)}초`" />
-          <Tag severity="secondary" :value="`에너지 ${n1(stats.energy_wh)} Wh`" />
+          <Tag v-if="summary.em_frames" severity="secondary" :value="`에너지 EM ${n1(stats.em_energy_wh)} Wh`" />
+          <Tag severity="secondary" :value="`에너지 ${summary.em_frames ? '컨트롤러 ' : ''}${n1(stats.energy_wh)} Wh`" />
           <Tag severity="secondary" :value="`거리 ${n1(stats.distance_km * 1000)} m`" />
         </div>
         <DataTable :value="stat_rows" size="small">
