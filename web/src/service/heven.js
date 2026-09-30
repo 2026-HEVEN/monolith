@@ -25,6 +25,9 @@ export const ID = {
 };
 
 /* wheel radius 0.2387 m, final drive 3.72 */
+// 영광 제10조: 출력 10 kW, 500 ms 이동평균으로 판정
+export const POWER_LIMIT_KW = 10;
+export const POWER_AVG_WINDOW_S = 0.5;
 export const RPM_TO_KPH = 0.2387 * 2 * Math.PI / 3.72 * 60 / 1000;
 
 export const BLOCK_NAMES = [
@@ -116,6 +119,8 @@ export const CHANNELS = [
 
   { key: 'p_dc', label: 'DC 전력 합계', panel: 'power', unit: 'kW' },
   { key: 'em_p', label: 'EM 전력', panel: 'power', unit: 'kW' },
+  { key: 'p_dc_ma', label: 'DC 전력 500ms 평균', panel: 'power', unit: 'kW', show: false },
+  { key: 'em_p_ma', label: 'EM 전력 500ms 평균', panel: 'power', unit: 'kW' },
 
   { key: 'rpm_L', label: 'rpm L', panel: 'rpm', unit: 'rpm' },
   { key: 'rpm_R', label: 'rpm R', panel: 'rpm', unit: 'rpm' },
@@ -411,6 +416,9 @@ export function analyze(buf, opts = {}) {
 
   if (t_first === null) throw new Error('No records');
 
+  s.p_dc_ma = moving_average(s.p_dc, POWER_AVG_WINDOW_S);
+  s.em_p_ma = moving_average(s.em_p, POWER_AVG_WINDOW_S);
+
   const an = {
     t0: t_first, t1: t_last, records, bad, counts, series: s,
     probes, replies, alerts, sta_lost, gaps, raw_events,
@@ -447,6 +455,32 @@ function runs(series, pred, join = 0.3, t0 = -Infinity, t1 = Infinity) {
       if (cur && t - cur.end <= join) { cur.end = t; cur.peak = Math.max(cur.peak, v); cur.n++; }
       else { cur = { t, end: t, peak: v, n: 1 }; out.push(cur); }
     }
+  }
+  return out;
+}
+
+/* Trailing time-weighted mean over win seconds, evaluated at each sample.
+ * Sample-and-hold like integrate(); a gap counts for at most cap seconds, so
+ * a CAN dropout reads as zero power rather than holding the last value. */
+function moving_average(series, win, cap = 0.2) {
+  const n = series.t.length;
+  const acc = new Float64Array(n);          // integral from t[0] to t[k]
+  for (let k = 1; k < n; k++) {
+    const v = series.v[k - 1];
+    acc[k] = acc[k - 1] + (Number.isNaN(v) ? 0 : v * Math.min(series.t[k] - series.t[k - 1], cap));
+  }
+  const integral_to = x => {
+    const k = lower_bound(series.t, x + 1e-9) - 1;
+    if (k < 0) return 0;
+    const v = series.v[k];
+    return acc[k] + (Number.isNaN(v) ? 0 : v * Math.min(x - series.t[k], cap));
+  };
+  const out = new_series();
+  for (let k = 0; k < n; k++) {
+    const t = series.t[k];
+    if (t - series.t[0] < win) continue;     // window not yet full
+    out.t.push(t);
+    out.v.push((acc[k] - integral_to(t - win)) / win);
   }
   return out;
 }
@@ -676,6 +710,10 @@ function summarize(an) {
     soc: st('soc'),
     energy_wh: integrate(s.p_dc, an.t0, an.t1) * 1000 / 3600,
     em_p: st('em_p'),
+    em_p_ma: st('em_p_ma'),
+    p_dc_ma: st('p_dc_ma'),
+    em_ma_over: time_above(s.em_p_ma, POWER_LIMIT_KW, an.t0, an.t1),
+    dc_ma_over: time_above(s.p_dc_ma, POWER_LIMIT_KW, an.t0, an.t1),
     em_i: st('em_i'),
     em_energy_wh: integrate(s.em_p, an.t0, an.t1) * 1000 / 3600,
     distance_km: integrate(s.spd_motor, an.t0, an.t1) / 3600,

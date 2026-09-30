@@ -3,7 +3,7 @@
   import {dark} from '@/layout/composables/layout';
   import {colors} from '@/service/ui';
   import {
-    PANELS, CHANNELS, FLAG_LANES, EVENT_CATS,
+    PANELS, CHANNELS, FLAG_LANES, EVENT_CATS, POWER_LIMIT_KW,
     resample, range_stats, set_threshold, to_csv,
   } from '@/service/heven';
 
@@ -36,6 +36,8 @@
   const n1 = v => v === null || v === undefined || !isFinite(v) ? '-' : (Math.round(v * 10) / 10 + 0).toLocaleString();
   const n0 = v => v === null || v === undefined || !isFinite(v) ? '-' : Math.round(v).toLocaleString();
   const at = st => st ? ` @ ${st.toFixed(1)}s` : '';
+  const n2 = v => v === null || v === undefined || !isFinite(v) ? '-' : v.toFixed(2);
+  const ma_sub = (st, over) => at(st?.t_max) + (over > 0 ? ` · ${POWER_LIMIT_KW}kW 초과 ${over.toFixed(2)}초` : '');
 
   const cards = computed(() => {
     const s = summary.value;
@@ -45,10 +47,12 @@
       {label: '주행 거리 (모터 환산)', value: `${n1(s.distance_km * 1000)} m`},
       ...(s.em_frames ? [
         {label: '소비 에너지 (EM)', value: `${n1(s.em_energy_wh)} Wh`, sub: `컨트롤러 ${n1(s.energy_wh)} Wh`},
-        {label: '최대 전력 (EM)', value: `${n1(s.em_p?.max)} kW`, sub: at(s.em_p?.t_max), warn: s.em_p?.max > 10},
+        {label: '최대 500ms 평균 전력 (EM)', value: `${n2(s.em_p_ma?.max)} kW`, sub: ma_sub(s.em_p_ma, s.em_ma_over), warn: s.em_p_ma?.max > POWER_LIMIT_KW},
+        {label: '최대 순간 전력 (EM)', value: `${n1(s.em_p?.max)} kW`, sub: at(s.em_p?.t_max)},
         {label: '최대 전류 (EM)', value: `${n0(s.em_i?.max)} A`, sub: at(s.em_i?.t_max)},
       ] : [
         {label: '소비 에너지 (컨트롤러)', value: `${n1(s.energy_wh)} Wh`},
+        {label: '최대 500ms 평균 DC 전력', value: `${n2(s.p_dc_ma?.max)} kW`, sub: ma_sub(s.p_dc_ma, s.dc_ma_over), warn: s.p_dc_ma?.max > POWER_LIMIT_KW},
       ]),
       {label: '최대 버스전류 합계', value: `${n0(s.ibus_sum?.max)} A`, sub: at(s.ibus_sum?.t_max)},
       {label: '최대 DC 전력', value: `${n1(s.p_dc?.max)} kW`, sub: at(s.p_dc?.t_max)},
