@@ -8,6 +8,8 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_mac.h"
+#include "esp_rom_sys.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 
 /***** global variables *****/
@@ -33,6 +35,7 @@ static void core_init(void);
 static void nvs_init(void);
 static void rtc_init(void);
 static void peripheral_task_init(void);
+static void log_reset_reason(void);
 
 void task_can(void *pvParameters);
 void task_gps(void *pvParameters);
@@ -60,6 +63,9 @@ void app_main(void) {
   /*** SDIO ***/
   sdcard_init();
 
+  /*** reset cause, first record after the log queue exists ***/
+  log_reset_reason();
+
   /*** peripherals ***/
   peripheral_task_init();
 
@@ -70,6 +76,24 @@ void app_main(void) {
   }
 
   SYSLOG("INIT_DONE");
+}
+
+/*******************************************************************************
+ * reset cause as a system event, e.g. "RST:BROWNOUT/15"
+ * IDF reason name, then the raw ROM reason of CPU0 for finer detail
+ ******************************************************************************/
+static void log_reset_reason(void) {
+  static const char *const names[] = {
+    "UNKNOWN", "POWERON", "EXT", "SW", "PANIC", "INT_WDT", "TASK_WDT", "WDT",
+    "DEEPSLEEP", "BROWNOUT", "SDIO", "USB", "JTAG", "EFUSE", "PWR_GLITCH", "CPU_LOCKUP",
+  };
+  esp_reset_reason_t reason = esp_reset_reason();
+  const char *name = (unsigned)reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "?";
+
+  char msg[sizeof(((system_event_t *)0)->msg) + 1];
+  snprintf(msg, sizeof(msg), "RST:%s/%d", name, (int)esp_rom_get_reset_reason(0));
+  SYSLOG(msg);
+  INFO(CORE, "reset reason: %s", msg);
 }
 
 /*******************************************************************************
