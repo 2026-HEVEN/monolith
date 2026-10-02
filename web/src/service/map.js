@@ -50,9 +50,13 @@ export function rebuild_hotline(map, line, path, mode) {
             min = 0;
             max = path.value.length - 1 || 1;
         } else {
-            const speeds = path.value.map((p) => p[2]);
-            min = Math.min(...speeds);
-            max = Math.max(...speeds);
+            // no spread: a long trail exceeds the argument limit
+            min = Infinity;
+            max = -Infinity;
+            for (const p of path.value) {
+                if (p[2] < min) min = p[2];
+                if (p[2] > max) max = p[2];
+            }
             if (min === max) max = min + 1;
         }
     }

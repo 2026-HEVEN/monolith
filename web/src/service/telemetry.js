@@ -19,7 +19,8 @@ let rebuildTimer = null;
 
 export const dirty = { analog: false, gyro: false, can: false };
 
-const MAX_TELEMETRY_POINTS = 36000;
+const MAX_TELEMETRY_POINTS = 36000; // charts show the last 60 s only
+const MAX_PATH_POINTS = 200000;      // GPS trail: ~12 h at 4.5 Hz, i.e. the whole session
 const HOTLINE_REBUILD_INTERVAL = 1000;
 
 function trim(arr) {
@@ -33,10 +34,11 @@ function trim(arr) {
 
 function scheduleRebuild() {
     if (rebuildTimer) return;
+    // redrawing the whole trail gets heavier as it grows: 1 s up to 10k points, then slower
     rebuildTimer = setTimeout(() => {
         rebuild_hotline(map, line, path, hotlineMode.value);
         rebuildTimer = null;
-    }, HOTLINE_REBUILD_INTERVAL);
+    }, Math.max(HOTLINE_REBUILD_INTERVAL, path.value.length / 10));
 }
 
 export function switchHotlineMode(mode) {
@@ -107,13 +109,16 @@ export function update_telemetry(data) {
                 current_pos.setLatLng(latlng);
             }
 
-            // [lat, lng, speed, timestamp] — speed stored for hotline z-value
-            path.value.push([latlng[0], latlng[1], data.gps.gps.speed, data.gps.timestamp]);
-            if (path.value.length > MAX_TELEMETRY_POINTS) {
-                path.value.splice(0, path.value.length - MAX_TELEMETRY_POINTS);
-            }
+            // logbuf repeats the last GPS sample every cycle; keep each sample once
+            if (path.value.at(-1)?.[3] !== data.gps.timestamp) {
+                // [lat, lng, speed, timestamp] — speed stored for hotline z-value
+                path.value.push([latlng[0], latlng[1], data.gps.gps.speed, data.gps.timestamp]);
+                if (path.value.length > MAX_PATH_POINTS) {
+                    path.value.splice(0, path.value.length - MAX_PATH_POINTS);
+                }
 
-            scheduleRebuild();
+                scheduleRebuild();
+            }
             map.value.panTo(latlng);
         }
     }
@@ -275,10 +280,7 @@ export async function backfill(force = false) {
     dirty.analog = dirty.gyro = dirty.can = true;
 
     if (gps.length) {
-        path.value.unshift(...gps.slice(-MAX_TELEMETRY_POINTS));
-        if (path.value.length > MAX_TELEMETRY_POINTS) {
-            path.value.splice(0, path.value.length - MAX_TELEMETRY_POINTS);
-        }
+        path.value = gps.concat(path.value).slice(-MAX_PATH_POINTS);
         rebuild_hotline(map, line, path, hotlineMode.value);
         if (map.value && line.value) map.value.fitBounds(line.value.getBounds(), { maxZoom: 18 });
     }
