@@ -95,6 +95,7 @@ function logger_open(item) {
     set_download_sink((blob, name) => {
         logger_dialog.value = false;
         logger_opening.value = '';
+        server_file.value = '';
         open_file(blob, name);
     });
 
@@ -112,7 +113,60 @@ function logger_open(item) {
 }
 
 function upload(f) {
+    server_file.value = '';
     open_file(f.files[0], f.files[0].name);
+}
+
+/* ---- open a live recording from the server ----
+ * The recorder (monolith/recorder) on the web host writes the logger's MQTT
+ * stream into SD-format .live.log files; nginx lists them as JSON at /live/.
+ * A file still growing can be reopened to pick up what arrived since. */
+const server_dialog = ref(false);
+const server_list = ref([]);
+const server_loading = ref(false);
+const server_opening = ref('');
+const server_file = ref('');
+
+async function server_refresh() {
+    server_loading.value = true;
+    try {
+        const res = await fetch('/live/', { cache: 'no-store' });
+        const list = await res.json();
+        server_list.value = list
+            .filter((f) => f.type === 'file' && f.name.endsWith('.live.log'))
+            .map((f) => ({ name: f.name, size: f.size, mtime: new Date(f.mtime) }))
+            .sort((a, b) => b.mtime - a.mtime);
+    } catch (e) {
+        server_list.value = [];
+        console.error(`live list: ${e}`);
+    } finally {
+        server_loading.value = false;
+    }
+}
+
+function server_show() {
+    server_dialog.value = true;
+    server_refresh();
+}
+
+function server_recording(item) {
+    return Date.now() - item.mtime.getTime() < 60000;
+}
+
+async function server_open(name) {
+    server_opening.value = name;
+    try {
+        const res = await fetch(`/live/${encodeURIComponent(name)}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(res.statusText);
+        const blob = await res.blob();
+        server_dialog.value = false;
+        server_file.value = name;
+        open_file(blob, name);
+    } catch (e) {
+        console.error(`live open: ${e}`);
+    } finally {
+        server_opening.value = '';
+    }
 }
 
 function open_file(blob, name) {
@@ -640,7 +694,9 @@ function timelapse() {
                 <div class="flex justify-start mt-4 w-full" style="align-items: center">
                     <FileUpload mode="basic" accept=".log" @uploader="upload" :auto="true" customUpload chooseIcon="pi pi-file" chooseLabel="Select" />
                     <Button label="로거에서 불러오기" icon="pi pi-cloud-download" severity="secondary" class="ml-2" :disabled="connection.device.value !== 'Online'" :title="connection.device.value === 'Online' ? '' : '로거가 오프라인입니다'" @click="logger_show" />
+                    <Button label="서버 녹화본" icon="pi pi-server" severity="secondary" class="ml-2" @click="server_show" />
                     <span class="ml-4"> {{ file.name.value ? file.name : 'Select a file to view' }}</span>
+                    <Button v-if="server_file" icon="pi pi-refresh" text size="small" class="ml-2" :loading="server_opening === server_file" @click="server_open(server_file)" title="다시 불러오기 (이후 수신분 반영)" />
                 </div>
                 <div v-if="file.name" class="mt-6 space-y-5">
                     <div class="flex">
@@ -688,6 +744,30 @@ function timelapse() {
                     <Column style="width: 5rem">
                         <template #body="{ data }">
                             <Button label="열기" size="small" :loading="logger_opening === data.name" :disabled="files.disabled" @click="logger_open(data)" />
+                        </template>
+                    </Column>
+                </DataTable>
+            </Dialog>
+
+            <Dialog v-model:visible="server_dialog" modal header="서버 녹화본" :style="{ width: '34rem', maxWidth: '95vw' }">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm opacity-70">주행 중 MQTT로 받은 라이브 데이터입니다. CAN은 ID별로 텔레메트리 간격마다 1프레임씩만 담겨 있어서, 짧은 현상은 SD 로그로 확인하세요.</span>
+                    <Button icon="pi pi-refresh" text size="small" :loading="server_loading" @click="server_refresh" title="목록 새로고침" />
+                </div>
+                <DataTable :value="server_list" size="small" scrollable scrollHeight="360px" :loading="server_loading">
+                    <template #empty><div class="p-3 text-center opacity-60">녹화본이 없습니다.</div></template>
+                    <Column header="파일">
+                        <template #body="{ data }">
+                            {{ data.name.replace('.live.log', '') }}
+                            <Tag v-if="server_recording(data)" value="수신 중" severity="danger" class="ml-2" />
+                        </template>
+                    </Column>
+                    <Column header="크기" style="width: 7rem">
+                        <template #body="{ data }">{{ format_size(data.size) }}</template>
+                    </Column>
+                    <Column style="width: 5rem">
+                        <template #body="{ data }">
+                            <Button label="열기" size="small" :loading="server_opening === data.name" @click="server_open(data.name)" />
                         </template>
                     </Column>
                 </DataTable>
