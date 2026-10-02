@@ -1,0 +1,12 @@
+{
+  "name": "monolith-recorder",
+  "private": true,
+  "type": "module",
+  "main": "recorder.mjs",
+  "scripts": {
+    "start": "node recorder.mjs"
+  },
+  "dependencies": {
+    "mqtt": "^5.15.0"
+  }
+}
