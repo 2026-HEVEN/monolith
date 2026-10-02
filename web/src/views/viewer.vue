@@ -1,7 +1,7 @@
 <script setup>
 defineOptions({ name: 'Viewer' });
 
-import { ref, shallowRef, onMounted } from 'vue';
+import { ref, shallowRef, onMounted, onUnmounted, watch } from 'vue';
 import { dark } from '@/layout/composables/layout';
 import { parse, convert, signed, can_filter_match } from '@/service/protocol';
 import { fmt, digit, format_size, connection, files } from '@/service/state';
@@ -126,6 +126,31 @@ const server_list = ref([]);
 const server_loading = ref(false);
 const server_opening = ref('');
 const server_file = ref('');
+const server_size = ref(0);
+
+/* auto reload: while a server recording is open, check the listing every
+ * interval and reopen the file only when it has grown */
+const server_auto = ref(0);
+const server_auto_options = [
+    { name: '자동 갱신 끔', value: 0 },
+    { name: '1분마다', value: 60000 },
+    { name: '2분마다', value: 120000 }
+];
+let server_timer = null;
+
+async function server_tick() {
+    if (!server_file.value || server_opening.value) return;
+    await server_refresh();
+    const cur = server_list.value.find((f) => f.name === server_file.value);
+    if (cur && cur.size > server_size.value) server_open(cur.name);
+}
+
+watch([server_auto, server_file], ([ms, name]) => {
+    clearInterval(server_timer);
+    server_timer = ms && name ? setInterval(server_tick, ms) : null;
+});
+
+onUnmounted(() => clearInterval(server_timer));
 
 async function server_refresh() {
     server_loading.value = true;
@@ -160,7 +185,12 @@ async function server_open(name) {
         if (!res.ok) throw new Error(res.statusText);
         const blob = await res.blob();
         server_dialog.value = false;
+        if (server_file.value !== name) {
+            const item = server_list.value.find((f) => f.name === name);
+            server_auto.value = item && server_recording(item) ? 60000 : 0;
+        }
         server_file.value = name;
+        server_size.value = blob.size;
         open_file(blob, name);
     } catch (e) {
         console.error(`live open: ${e}`);
@@ -697,6 +727,7 @@ function timelapse() {
                     <Button label="서버 녹화본" icon="pi pi-server" severity="secondary" class="ml-2" @click="server_show" />
                     <span class="ml-4"> {{ file.name.value ? file.name : 'Select a file to view' }}</span>
                     <Button v-if="server_file" icon="pi pi-refresh" text size="small" class="ml-2" :loading="server_opening === server_file" @click="server_open(server_file)" title="다시 불러오기 (이후 수신분 반영)" />
+                    <Select v-if="server_file" v-model="server_auto" :options="server_auto_options" optionLabel="name" optionValue="value" size="small" class="ml-2" />
                 </div>
                 <div v-if="file.name" class="mt-6 space-y-5">
                     <div class="flex">

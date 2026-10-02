@@ -7,7 +7,7 @@ import { publish } from '@/service/mqtt';
 import { term } from '@/service/terminal';
 import { state, times, cons, telemetry, fmt, digit, can_slice } from '@/service/state';
 import { views, units, can_decoder, can_unit_groups, colors } from '@/service/ui';
-import { map, line, path, speed, course, fix, dirty, hotlineMode, switchHotlineMode } from '@/service/telemetry';
+import { map, line, path, speed, course, fix, dirty, hotlineMode, switchHotlineMode, backfill, reset_backfill } from '@/service/telemetry';
 import { init_map, HOTLINE_MODE } from '@/service/map';
 
 import ToastEventBus from 'primevue/toasteventbus';
@@ -92,7 +92,13 @@ onMounted(() => {
     init_map(map, line, path, container.gps, hotlineMode.value);
 
     init_chart();
+
+    // init_map starts a fresh trail, so fill it (and the charts) from the server recording again
+    reset_backfill();
+    backfill();
 });
+
+watch(() => times.boot.raw, () => backfill());
 
 const axis = {
     temp: { splits: [], min: 0, max: 0 },
