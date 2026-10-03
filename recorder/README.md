@@ -24,9 +24,14 @@ ssh omo 'docker logs --tail 50 monolith-recorder'
 
 ## 도구
 
+분석 방법 전체는 [AGENTS.md](AGENTS.md) 참고.
+
 ```bash
-node live.mjs                          # omo의 최신 live 로그 요약 + 이벤트
+node live.mjs --list                   # 서버 녹화본 목록 (공개 URL, ssh 불필요)
+node live.mjs                          # 최신 녹화본 요약 + 이벤트
 node live.mjs --since 300              # 300초 이후 이벤트만
+node live.mjs <이름> --csv out.csv     # 전 채널 CSV
+node live.mjs omo:latest               # ssh로 직접 (관리자)
 node test/replay.mjs <sd.log> [100]    # SD 로그를 MQTT 스트림처럼 재생해 녹화기 검증
 node --env-file=.env set-intv.mjs 100  # 로거가 온라인이 되면 intv 설정 (다음 부팅부터 적용)
 ```
